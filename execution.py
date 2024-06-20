@@ -768,19 +768,7 @@ class PromptQueue:
     def task_done(self, item_id, outputs,
                   status: Optional['PromptQueue.ExecutionStatus']):
         with self.mutex:
-            prompt = self.currently_running.pop(item_id)
-            if len(self.history) > MAXIMUM_HISTORY_SIZE:
-                self.history.pop(next(iter(self.history)))
-
-            status_dict: Optional[dict] = None
-            if status is not None:
-                status_dict = copy.deepcopy(status._asdict())
-
-            self.history[prompt[1]] = {
-                "prompt": prompt,
-                "outputs": copy.deepcopy(outputs),
-                'status': status_dict,
-            }
+            self.currently_running.pop(item_id)
             self.server.queue_updated()
 
     def get_current_queue(self):

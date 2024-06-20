@@ -1471,8 +1471,7 @@ class PreviewImage(SaveImage):
 class LoadImage:
     @classmethod
     def INPUT_TYPES(s):
-        input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = []
         return {"required":
                     {"image": (sorted(files), {"image_upload": True})},
                 }
@@ -1544,8 +1543,7 @@ class LoadImageMask:
     _color_channels = ["alpha", "red", "green", "blue"]
     @classmethod
     def INPUT_TYPES(s):
-        input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+        files = []
         return {"required":
                     {"image": (sorted(files), {"image_upload": True}),
                      "channel": (s._color_channels, ), }

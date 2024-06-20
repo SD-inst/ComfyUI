@@ -441,9 +441,6 @@ class PromptServer():
         @routes.get("/queue")
         async def get_queue(request):
             queue_info = {}
-            current_queue = self.prompt_queue.get_current_queue()
-            queue_info['queue_running'] = current_queue[0]
-            queue_info['queue_pending'] = current_queue[1]
             return web.json_response(queue_info)
 
         @routes.post("/prompt")
@@ -488,9 +485,6 @@ class PromptServer():
         @routes.post("/queue")
         async def post_queue(request):
             json_data =  await request.json()
-            if "clear" in json_data:
-                if json_data["clear"]:
-                    self.prompt_queue.wipe_queue()
             if "delete" in json_data:
                 to_delete = json_data['delete']
                 for id_to_delete in to_delete:
