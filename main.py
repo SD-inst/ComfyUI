@@ -52,6 +52,7 @@ import itertools
 import shutil
 import threading
 import gc
+import requests
 
 from comfy.cli_args import args
 import logging
@@ -122,6 +123,7 @@ def prompt_worker(q, server):
             current_time = time.perf_counter()
             execution_time = current_time - execution_start_time
             logging.info("Prompt executed in {:.2f} seconds".format(execution_time))
+            requests.post('http://authproxy:7860/cui/leave', timeout=5)
 
         flags = q.get_flags()
         free_memory = flags.get("free_memory", False)
