@@ -1,0 +1,17 @@
+numpy
+fsspec
+matplotlib
+requests
+omegaconf
+transformers
+pytorch-lightning
+packaging
+regex
+ftfy
+tqdm
+sentencepiece
+protobuf
+pyyaml
+huggingface_hub
+open-clip-torch
+xformers==0.0.26.post1
