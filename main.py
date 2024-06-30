@@ -104,6 +104,7 @@ def prompt_worker(q, server):
 
         queue_item = q.get(timeout=timeout)
         if queue_item is not None:
+            requests.post("http://authproxy:7860/cui/join", timeout=5)
             item, item_id = queue_item
             execution_start_time = time.perf_counter()
             prompt_id = item[1]
