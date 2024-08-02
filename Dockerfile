@@ -21,9 +21,10 @@ RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/
 RUN useradd -m -u 10000 sd
 RUN --mount=type=cache,target=/root/.cache python -m pip install --upgrade pip wheel
 WORKDIR /app
-COPY requirements.txt svd_reqs.txt vhs_reqs.txt dyncr_reqs.txt kj_reqs.txt /app/
+COPY requirements.txt /app/
 RUN --mount=type=cache,target=/root/.cache python -m pip install --extra-index-url https://download.pytorch.org/whl/cu121 -r /app/requirements.txt
-RUN --mount=type=cache,target=/root/.cache python -m pip install --extra-index-url https://download.pytorch.org/whl/cu121 -r /app/svd_reqs.txt -r /app/vhs_reqs.txt -r /app/dyncr_reqs.txt -r /app/kj_reqs.txt
+COPY svd_reqs.txt vhs_reqs.txt dyncr_reqs.txt kj_reqs.txt fint_reqs.txt /app/
+RUN --mount=type=cache,target=/root/.cache python -m pip install --extra-index-url https://download.pytorch.org/whl/cu121 -r /app/svd_reqs.txt -r /app/vhs_reqs.txt -r /app/dyncr_reqs.txt -r /app/kj_reqs.txt -r /app/fint_reqs.txt
 USER 10000:10000
 ENTRYPOINT ["python", "main.py"]
 CMD ["--listen", "--disable-smart-memory"]
