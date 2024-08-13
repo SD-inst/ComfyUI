@@ -482,13 +482,13 @@ export class ComfyUI {
 						id: "batchCountInputRange",
 						type: "range",
 						min: "1",
-						max: "100",
+						max: "10",
 						value: this.batchCount,
 						oninput: (i) => {
 							this.batchCount = i.srcElement.value;
 							document.getElementById("batchCountInputNumber").value = i.srcElement.value;
 						},
-					}),		
+					}),
 				]),
 				$el("div",[
 					$el("label",{
