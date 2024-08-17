@@ -14,4 +14,4 @@ protobuf
 pyyaml
 huggingface_hub
 open-clip-torch
-xformers==0.0.26.post1
+xformers
