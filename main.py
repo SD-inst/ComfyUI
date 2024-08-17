@@ -163,11 +163,14 @@ async def run(server, address='', port=8188, verbose=True, call_on_start=None):
 
 
 def hijack_progress(server):
+    import requests
     def hook(value, total, preview_image):
         comfy.model_management.throw_exception_if_processing_interrupted()
         progress = {"value": value, "max": total, "prompt_id": server.last_prompt_id, "node": server.last_node_id}
 
         server.send_sync("progress", progress, server.client_id)
+        progress["queue"] = server.prompt_queue.get_tasks_remaining() - 1
+        requests.post("http://authproxy:7860/cui/progress", json=progress, timeout=2)
         if preview_image is not None:
             server.send_sync(BinaryEventTypes.UNENCODED_PREVIEW_IMAGE, preview_image, server.client_id)
     comfy.utils.set_progress_bar_global_hook(hook)
