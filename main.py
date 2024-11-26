@@ -177,7 +177,7 @@ def hijack_progress(server):
         progress = {"value": value, "max": total, "prompt_id": server.last_prompt_id, "node": server.last_node_id}
 
         server.send_sync("progress", progress, server.client_id)
-        progress["queue"] = server.prompt_queue.get_tasks_remaining() - 1
+        progress["queue"] = server.prompt_queue.get_tasks_remaining()
         requests.post("http://authproxy:7860/cui/progress", json=progress, timeout=2)
         if preview_image is not None:
             server.send_sync(BinaryEventTypes.UNENCODED_PREVIEW_IMAGE, preview_image, server.client_id)
