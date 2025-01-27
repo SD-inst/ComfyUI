@@ -405,7 +405,8 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
         }
         if isinstance(ex, comfy.model_management.OOM_EXCEPTION):
             logging.error("Got an OOM, unloading all loaded models.")
-            comfy.model_management.unload_all_models()
+            server.prompt_queue.set_flag("unload_models", True)
+            server.prompt_queue.set_flag("free_memory", True)
 
         return (ExecutionResult.FAILURE, error_details, ex)
 
