@@ -139,6 +139,8 @@ import server
 from server import BinaryEventTypes
 import nodes
 import comfy.model_management
+import comfyui_version
+
 
 def cuda_malloc_warning():
     device = comfy.model_management.get_torch_device()
@@ -297,6 +299,7 @@ def start_comfyui(asyncio_loop=None):
 
 if __name__ == "__main__":
     # Running directly, just start ComfyUI.
+    logging.info("ComfyUI version: {}".format(comfyui_version.__version__))
     event_loop, _, start_all_func = start_comfyui()
     try:
         event_loop.run_until_complete(start_all_func())
