@@ -44,7 +44,8 @@ COPY custom_nodes/ComfyUI-MMAudio/requirements.txt /app/mma_reqs.txt
 RUN --mount=type=cache,target=/root/.cache python -m pip install --extra-index-url https://download.pytorch.org/whl/cu124 -r /app/mma_reqs.txt
 COPY custom_nodes/EasyAnimate/requirements.txt /app/ea_reqs.txt
 RUN --mount=type=cache,target=/root/.cache python -m pip install --extra-index-url https://download.pytorch.org/whl/cu124 -r /app/ea_reqs.txt
+RUN --mount=type=cache,target=/root/.cache python -m pip install --extra-index-url https://download.pytorch.org/whl/cu124 torchaudio torchvision
 RUN mkdir /home/sd/.cache && chown 10000:10000 /home/sd/.cache
 USER 10000:10000
 ENTRYPOINT ["python", "main.py"]
-CMD ["--listen", "--disable-smart-memory"]
+CMD ["--listen"]
