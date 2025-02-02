@@ -1,6 +1,7 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-import { ci as ComfyDialog, cj as $el, ck as ComfyApp, h as app, a5 as LiteGraph, bl as LGraphCanvas, cl as useExtensionService, cm as processDynamicPrompt, bT as isElectron, bV as electronAPI, bW as useDialogService, cn as t, co as DraggableList, bA as useToastStore, aj as LGraphNode, cp as applyTextReplacements, cq as ComfyWidgets, cr as addValueControlWidgets, a8 as useNodeDefStore, cs as serialise, ct as deserialiseAndCreate, bh as api, a as useSettingStore, ai as LGraphGroup, af as nextTick, bO as lodashExports, bg as setStorageValue, bb as getStorageValue } from "./index-QvfM__ze.js";
+import { da as ComfyDialog, db as $el, dc as ComfyApp, h as app, M as LiteGraph, aF as LGraphCanvas, dd as useExtensionService, de as processDynamicPrompt, b4 as isElectron, b5 as electronAPI, b as useWorkflowStore, bu as checkMirrorReachable, b7 as useDialogService, bc as t, df as DraggableList, aS as useToastStore, $ as LGraphNode, dg as applyTextReplacements, dh as ComfyWidgets, di as addValueControlWidgets, P as useNodeDefStore, dj as serialise, dk as deserialiseAndCreate, aH as api, a as useSettingStore, Z as LGraphGroup, W as nextTick, b0 as lodashExports, aK as setStorageValue, aI as getStorageValue } from "./index-CmVtQCAR.js";
+import { P as PYTHON_MIRROR } from "./uvMirrors-B-HKMf6X.js";
 class ClipspaceDialog extends ComfyDialog {
   static {
     __name(this, "ClipspaceDialog");
@@ -422,6 +423,7 @@ app.registerExtension({
   if (!isElectron()) return;
   const electronAPI$1 = electronAPI();
   const desktopAppVersion = await electronAPI$1.getElectronVersion();
+  const workflowStore = useWorkflowStore();
   const onChangeRestartApp = /* @__PURE__ */ __name((newValue, oldValue) => {
     if (oldValue !== void 0 && newValue !== oldValue) {
       electronAPI$1.restartApp("Restart ComfyUI to apply changes.", 1500);
@@ -450,15 +452,49 @@ app.registerExtension({
         id: "Comfy-Desktop.WindowStyle",
         category: ["Comfy-Desktop", "General", "Window Style"],
         name: "Window Style",
-        tooltip: "Choose custom option to hide the system title bar",
+        tooltip: "Custom: Replace the system title bar with ComfyUI's Top menu",
         type: "combo",
         experimental: true,
         defaultValue: "default",
         options: ["default", "custom"],
         onChange: /* @__PURE__ */ __name((newValue, oldValue) => {
+          if (!oldValue) return;
           electronAPI$1.Config.setWindowStyle(newValue);
-          onChangeRestartApp(newValue, oldValue);
         }, "onChange")
+      },
+      {
+        id: "Comfy-Desktop.UV.PythonInstallMirror",
+        name: "Python Install Mirror",
+        tooltip: `Managed Python installations are downloaded from the Astral python-build-standalone project. This variable can be set to a mirror URL to use a different source for Python installations. The provided URL will replace https://github.com/astral-sh/python-build-standalone/releases/download in, e.g., https://github.com/astral-sh/python-build-standalone/releases/download/20240713/cpython-3.12.4%2B20240713-aarch64-apple-darwin-install_only.tar.gz. Distributions can be read from a local directory by using the file:// URL scheme.`,
+        type: "url",
+        defaultValue: "",
+        attrs: {
+          validateUrlFn(mirror) {
+            return checkMirrorReachable(
+              mirror + PYTHON_MIRROR.validationPathSuffix
+            );
+          }
+        }
+      },
+      {
+        id: "Comfy-Desktop.UV.PypiInstallMirror",
+        name: "Pypi Install Mirror",
+        tooltip: `Default pip install mirror`,
+        type: "url",
+        defaultValue: "",
+        attrs: {
+          validateUrlFn: checkMirrorReachable
+        }
+      },
+      {
+        id: "Comfy-Desktop.UV.TorchInstallMirror",
+        name: "Torch Install Mirror",
+        tooltip: `Pip install mirror for pytorch`,
+        type: "url",
+        defaultValue: "",
+        attrs: {
+          validateUrlFn: checkMirrorReachable
+        }
       }
     ],
     commands: [
@@ -519,14 +555,6 @@ app.registerExtension({
         }
       },
       {
-        id: "Comfy-Desktop.OpenFeedbackPage",
-        label: "Feedback",
-        icon: "pi pi-envelope",
-        function() {
-          window.open("https://forum.comfy.org/c/v1-feedback/", "_blank");
-        }
-      },
-      {
         id: "Comfy-Desktop.OpenUserGuide",
         label: "Desktop User Guide",
         icon: "pi pi-book",
@@ -554,15 +582,28 @@ app.registerExtension({
         function() {
           electronAPI$1.restartApp();
         }
+      },
+      {
+        id: "Comfy-Desktop.Quit",
+        label: "Quit",
+        icon: "pi pi-sign-out",
+        async function() {
+          if (workflowStore.modifiedWorkflows.length > 0) {
+            const confirmed = await useDialogService().confirm({
+              message: t("desktopMenu.confirmQuit"),
+              title: t("desktopMenu.quit"),
+              type: "default"
+            });
+            if (!confirmed) return;
+          }
+          electronAPI$1.quit();
+        }
       }
     ],
     menuCommands: [
       {
         path: ["Help"],
-        commands: [
-          "Comfy-Desktop.OpenUserGuide",
-          "Comfy-Desktop.OpenFeedbackPage"
-        ]
+        commands: ["Comfy-Desktop.OpenUserGuide"]
       },
       {
         path: ["Help"],
@@ -582,6 +623,15 @@ app.registerExtension({
       {
         path: ["Help"],
         commands: ["Comfy-Desktop.Reinstall"]
+      }
+    ],
+    keybindings: [
+      {
+        commandId: "Workspace.CloseWorkflow",
+        combo: {
+          key: "w",
+          ctrl: true
+        }
       }
     ],
     aboutPageBadges: [
@@ -1631,7 +1681,25 @@ app.registerExtension({
     };
     nodeType.prototype.getExtraMenuOptions = function(_, options) {
       const r = origGetExtraMenuOptions ? origGetExtraMenuOptions.apply(this, arguments) : void 0;
+      const getPointerCanvasPos = /* @__PURE__ */ __name(() => {
+        const pos = this.graph?.list_of_graphcanvas?.at(0)?.graph_mouse;
+        return pos ? { canvasX: pos[0], canvasY: pos[1] } : void 0;
+      }, "getPointerCanvasPos");
       if (this.widgets) {
+        const { canvasX, canvasY } = getPointerCanvasPos();
+        const widget = this.getWidgetOnPos(canvasX, canvasY);
+        if (widget && widget.type !== CONVERTED_TYPE) {
+          const config = getConfig.call(this, widget.name) ?? [
+            widget.type,
+            widget.options || {}
+          ];
+          if (isConvertibleWidget(widget, config)) {
+            options.push({
+              content: `Convert ${widget.name} to input`,
+              callback: /* @__PURE__ */ __name(() => convertToInput(this, widget, config) && false, "callback")
+            });
+          }
+        }
         let toInput = [];
         let toWidget = [];
         for (const w of this.widgets) {
@@ -2126,14 +2194,22 @@ class GroupNodeConfig {
     let name = customConfig?.name ?? node.inputs?.find((inp) => inp.name === inputName)?.label ?? inputName;
     let key = name;
     let prefix = "";
-    if (node.type === "PrimitiveNode" && node.title || name in seenInputs) {
+    seenInputs[key] = (seenInputs[key] ?? 0) + 1;
+    if (node.type === "PrimitiveNode" && node.title || seenInputs[name] > 1) {
       prefix = `${node.title ?? node.type} `;
       key = name = `${prefix}${inputName}`;
-      if (name in seenInputs) {
-        name = `${prefix}${seenInputs[name]} ${inputName}`;
+      seenInputs[name] = seenInputs[name] ?? 0;
+      let finalName;
+      if (seenInputs[name] > 0) {
+        prefix = `${node.title ?? node.type} `;
+        finalName = `${prefix} ${seenInputs[name] + 1} ${inputName}`;
+      } else {
+        prefix = `${node.title ?? node.type} `;
+        finalName = `${prefix}${inputName}`;
       }
+      seenInputs[name]++;
+      this.nodeDef.input.required[finalName] = config;
     }
-    seenInputs[key] = (seenInputs[key] ?? 1) + 1;
     if (inputName === "seed" || inputName === "noise_seed") {
       if (!extra) extra = {};
       extra.control_after_generate = `${prefix}control_after_generate`;
@@ -2307,23 +2383,20 @@ class GroupNodeConfig {
       };
       this.nodeDef.output.push(def.output[outputId]);
       this.nodeDef.output_is_list.push(def.output_is_list[outputId]);
-      let label = customConfig?.name;
+      let label = customConfig?.name ?? // If no custom name, check if the definition provides an output name
+      def.output_name?.[outputId] ?? // If neither exist, fallback to the raw output type (e.g., "FLOAT", "INT")
+      def.output[outputId];
       if (!label) {
-        label = def.output_name?.[outputId] ?? def.output[outputId];
-        const output = node.outputs.find((o) => o.name === label);
-        if (output?.label) {
-          label = output.label;
-        }
+        const output = node.outputs.find((o) => o.name);
+        label = output?.label ?? "UnnamedOutput";
       }
       let name = label;
-      if (name in seenOutputs) {
-        const prefix = `${node.title ?? node.type} `;
-        name = `${prefix}${label}`;
-        if (name in seenOutputs) {
-          name = `${prefix}${node.index} ${label}`;
-        }
+      const prefix = `${node.title ?? node.type} `;
+      name = `${prefix}${label}`;
+      if (seenOutputs[name]) {
+        name = `${prefix} ${seenOutputs[name] + 1} ${label}`;
       }
-      seenOutputs[name] = 1;
+      seenOutputs[name] = (seenOutputs[name] ?? 0) + 1;
       this.nodeDef.output_name.push(name);
     }
   }
@@ -3248,6 +3321,194 @@ app.registerExtension({
     };
   }
 });
+class Load3dUtils {
+  static {
+    __name(this, "Load3dUtils");
+  }
+  static async uploadTempImage(imageData, prefix) {
+    const blob = await fetch(imageData).then((r) => r.blob());
+    const name = `${prefix}_${Date.now()}.png`;
+    const file2 = new File([blob], name);
+    const body = new FormData();
+    body.append("image", file2);
+    body.append("subfolder", "threed");
+    body.append("type", "temp");
+    const resp = await api.fetchApi("/upload/image", {
+      method: "POST",
+      body
+    });
+    if (resp.status !== 200) {
+      const err2 = `Error uploading temp image: ${resp.status} - ${resp.statusText}`;
+      useToastStore().addAlert(err2);
+      throw new Error(err2);
+    }
+    return await resp.json();
+  }
+  static async uploadFile(load3d, file2, fileInput) {
+    let uploadPath;
+    try {
+      const body = new FormData();
+      body.append("image", file2);
+      body.append("subfolder", "3d");
+      const resp = await api.fetchApi("/upload/image", {
+        method: "POST",
+        body
+      });
+      if (resp.status === 200) {
+        const data = await resp.json();
+        let path = data.name;
+        if (data.subfolder) path = data.subfolder + "/" + path;
+        uploadPath = path;
+        const modelUrl = api.apiURL(
+          this.getResourceURL(...this.splitFilePath(path), "input")
+        );
+        await load3d.loadModel(modelUrl, file2.name);
+        const fileExt = file2.name.split(".").pop()?.toLowerCase();
+        if (fileExt === "obj" && fileInput?.files) {
+          try {
+            const mtlFile = Array.from(fileInput.files).find(
+              (f) => f.name.toLowerCase().endsWith(".mtl")
+            );
+            if (mtlFile) {
+              const mtlFormData = new FormData();
+              mtlFormData.append("image", mtlFile);
+              mtlFormData.append("subfolder", "3d");
+              await api.fetchApi("/upload/image", {
+                method: "POST",
+                body: mtlFormData
+              });
+            }
+          } catch (mtlError) {
+            console.warn("Failed to upload MTL file:", mtlError);
+          }
+        }
+      } else {
+        useToastStore().addAlert(resp.status + " - " + resp.statusText);
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      useToastStore().addAlert(
+        error instanceof Error ? error.message : "Upload failed"
+      );
+    }
+    return uploadPath;
+  }
+  static splitFilePath(path) {
+    const folder_separator = path.lastIndexOf("/");
+    if (folder_separator === -1) {
+      return ["", path];
+    }
+    return [
+      path.substring(0, folder_separator),
+      path.substring(folder_separator + 1)
+    ];
+  }
+  static getResourceURL(subfolder, filename, type = "input") {
+    const params = [
+      "filename=" + encodeURIComponent(filename),
+      "type=" + type,
+      "subfolder=" + subfolder,
+      app.getRandParam().substring(1)
+    ].join("&");
+    return `/view?${params}`;
+  }
+}
+class Load3DConfiguration {
+  static {
+    __name(this, "Load3DConfiguration");
+  }
+  constructor(load3d) {
+    this.load3d = load3d;
+  }
+  configure(loadFolder, modelWidget, material, lightIntensity, upDirection, fov2, cameraState, postModelUpdateFunc) {
+    this.setupModelHandling(
+      modelWidget,
+      loadFolder,
+      cameraState,
+      postModelUpdateFunc
+    );
+    this.setupMaterial(material);
+    this.setupLighting(lightIntensity);
+    this.setupDirection(upDirection);
+    this.setupCamera(fov2);
+    this.setupDefaultProperties();
+  }
+  setupModelHandling(modelWidget, loadFolder, cameraState, postModelUpdateFunc) {
+    const onModelWidgetUpdate = this.createModelUpdateHandler(
+      loadFolder,
+      cameraState,
+      postModelUpdateFunc
+    );
+    if (modelWidget.value) {
+      onModelWidgetUpdate(modelWidget.value);
+    }
+    modelWidget.callback = onModelWidgetUpdate;
+  }
+  setupMaterial(material) {
+    material.callback = (value) => {
+      this.load3d.setMaterialMode(value);
+    };
+    this.load3d.setMaterialMode(
+      material.value
+    );
+  }
+  setupLighting(lightIntensity) {
+    lightIntensity.callback = (value) => {
+      this.load3d.setLightIntensity(value);
+    };
+    this.load3d.setLightIntensity(lightIntensity.value);
+  }
+  setupDirection(upDirection) {
+    upDirection.callback = (value) => {
+      this.load3d.setUpDirection(value);
+    };
+    this.load3d.setUpDirection(
+      upDirection.value
+    );
+  }
+  setupCamera(fov2) {
+    fov2.callback = (value) => {
+      this.load3d.setFOV(value);
+    };
+    this.load3d.setFOV(fov2.value);
+  }
+  setupDefaultProperties() {
+    const cameraType = this.load3d.loadNodeProperty(
+      "Camera Type",
+      "perspective"
+    );
+    this.load3d.toggleCamera(cameraType);
+    const showGrid = this.load3d.loadNodeProperty("Show Grid", true);
+    this.load3d.toggleGrid(showGrid);
+    const bgColor = this.load3d.loadNodeProperty("Background Color", "#282828");
+    this.load3d.setBackgroundColor(bgColor);
+  }
+  createModelUpdateHandler(loadFolder, cameraState, postModelUpdateFunc) {
+    let isFirstLoad = true;
+    return async (value) => {
+      if (!value) return;
+      const filename = value;
+      const modelUrl = api.apiURL(
+        Load3dUtils.getResourceURL(
+          ...Load3dUtils.splitFilePath(filename),
+          loadFolder
+        )
+      );
+      await this.load3d.loadModel(modelUrl, filename);
+      if (postModelUpdateFunc) {
+        postModelUpdateFunc(this.load3d);
+      }
+      if (isFirstLoad && cameraState && typeof cameraState === "object") {
+        try {
+          this.load3d.setCameraState(cameraState);
+        } catch (error) {
+          console.warn("Failed to restore camera state:", error);
+        }
+        isFirstLoad = false;
+      }
+    };
+  }
+}
 /**
  * @license
  * Copyright 2010-2024 Three.js Authors
@@ -45950,76 +46211,6 @@ class STLLoader extends Loader {
     return isBinary(binData) ? parseBinary(binData) : parseASCII(ensureString(data));
   }
 }
-async function uploadTempImage(imageData, prefix) {
-  const blob = await fetch(imageData).then((r) => r.blob());
-  const name = `${prefix}_${Date.now()}.png`;
-  const file2 = new File([blob], name);
-  const body = new FormData();
-  body.append("image", file2);
-  body.append("subfolder", "threed");
-  body.append("type", "temp");
-  const resp = await api.fetchApi("/upload/image", {
-    method: "POST",
-    body
-  });
-  if (resp.status !== 200) {
-    const err2 = `Error uploading temp image: ${resp.status} - ${resp.statusText}`;
-    useToastStore().addAlert(err2);
-    throw new Error(err2);
-  }
-  return await resp.json();
-}
-__name(uploadTempImage, "uploadTempImage");
-async function uploadFile$1(load3d, file2, fileInput) {
-  let uploadPath;
-  try {
-    const body = new FormData();
-    body.append("image", file2);
-    body.append("subfolder", "3d");
-    const resp = await api.fetchApi("/upload/image", {
-      method: "POST",
-      body
-    });
-    if (resp.status === 200) {
-      const data = await resp.json();
-      let path = data.name;
-      if (data.subfolder) path = data.subfolder + "/" + path;
-      uploadPath = path;
-      const modelUrl = api.apiURL(
-        getResourceURL$1(...splitFilePath$1(path), "input")
-      );
-      await load3d.loadModel(modelUrl, file2.name);
-      const fileExt = file2.name.split(".").pop()?.toLowerCase();
-      if (fileExt === "obj" && fileInput?.files) {
-        try {
-          const mtlFile = Array.from(fileInput.files).find(
-            (f) => f.name.toLowerCase().endsWith(".mtl")
-          );
-          if (mtlFile) {
-            const mtlFormData = new FormData();
-            mtlFormData.append("image", mtlFile);
-            mtlFormData.append("subfolder", "3d");
-            await api.fetchApi("/upload/image", {
-              method: "POST",
-              body: mtlFormData
-            });
-          }
-        } catch (mtlError) {
-          console.warn("Failed to upload MTL file:", mtlError);
-        }
-      }
-    } else {
-      useToastStore().addAlert(resp.status + " - " + resp.statusText);
-    }
-  } catch (error) {
-    console.error("Upload error:", error);
-    useToastStore().addAlert(
-      error instanceof Error ? error.message : "Upload failed"
-    );
-  }
-  return uploadPath;
-}
-__name(uploadFile$1, "uploadFile$1");
 class Load3d {
   static {
     __name(this, "Load3d");
@@ -46049,10 +46240,12 @@ class Load3d {
   materialMode = "original";
   currentUpDirection = "original";
   originalRotation = null;
-  viewHelper;
-  viewHelperContainer;
-  cameraSwitcherContainer;
-  gridSwitcherContainer;
+  viewHelper = {};
+  viewHelperContainer = {};
+  cameraSwitcherContainer = {};
+  gridSwitcherContainer = {};
+  node = {};
+  bgColorInput = {};
   constructor(container) {
     this.scene = new Scene();
     this.perspectiveCamera = new PerspectiveCamera(75, 1, 0.1, 1e3);
@@ -46081,6 +46274,9 @@ class Load3d {
       this.renderer.domElement
     );
     this.controls.enableDamping = true;
+    this.controls.addEventListener("end", () => {
+      this.storeNodeProperty("Camera Info", this.getCameraState());
+    });
     this.gltfLoader = new GLTFLoader();
     this.objLoader = new OBJLoader();
     this.mtlLoader = new MTLLoader();
@@ -46112,8 +46308,23 @@ class Load3d {
     this.createViewHelper(container);
     this.createGridSwitcher(container);
     this.createCameraSwitcher(container);
+    this.createColorPicker(container);
     this.handleResize();
     this.startAnimation();
+  }
+  setNode(node) {
+    this.node = node;
+  }
+  storeNodeProperty(name, value) {
+    if (this.node) {
+      this.node.properties[name] = value;
+    }
+  }
+  loadNodeProperty(name, defaultValue) {
+    if (!this.node || !this.node.properties || !(name in this.node.properties)) {
+      return defaultValue;
+    }
+    return this.node.properties[name];
   }
   createViewHelper(container) {
     this.viewHelperContainer = document.createElement("div");
@@ -46216,6 +46427,42 @@ class Load3d {
     this.cameraSwitcherContainer.appendChild(cameraIcon);
     container.appendChild(this.cameraSwitcherContainer);
   }
+  createColorPicker(container) {
+    const colorPickerContainer = document.createElement("div");
+    colorPickerContainer.style.position = "absolute";
+    colorPickerContainer.style.top = "53px";
+    colorPickerContainer.style.left = "3px";
+    colorPickerContainer.style.width = "20px";
+    colorPickerContainer.style.height = "20px";
+    colorPickerContainer.style.cursor = "pointer";
+    colorPickerContainer.style.alignItems = "center";
+    colorPickerContainer.style.justifyContent = "center";
+    colorPickerContainer.title = "Background Color";
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.style.opacity = "0";
+    colorInput.style.position = "absolute";
+    colorInput.style.width = "100%";
+    colorInput.style.height = "100%";
+    colorInput.style.cursor = "pointer";
+    const colorIcon = document.createElement("div");
+    colorIcon.innerHTML = `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M12 3v18"/>
+        <path d="M3 12h18"/>
+      </svg>
+    `;
+    colorInput.addEventListener("input", (event) => {
+      const color = event.target.value;
+      this.setBackgroundColor(color);
+      this.storeNodeProperty("Background Color", color);
+    });
+    this.bgColorInput = colorInput;
+    colorPickerContainer.appendChild(colorInput);
+    colorPickerContainer.appendChild(colorIcon);
+    container.appendChild(colorPickerContainer);
+  }
   setFOV(fov2) {
     if (this.activeCamera === this.perspectiveCamera) {
       this.perspectiveCamera.fov = fov2;
@@ -46234,7 +46481,6 @@ class Load3d {
   }
   setCameraState(state) {
     if (this.activeCamera !== (state.cameraType === "perspective" ? this.perspectiveCamera : this.orthographicCamera)) {
-      this.toggleCamera(state.cameraType);
     }
     this.activeCamera.position.copy(state.position);
     this.controls.target.copy(state.target);
@@ -46414,6 +46660,7 @@ class Load3d {
       this.viewHelperContainer
     );
     this.viewHelper.center = this.controls.target;
+    this.storeNodeProperty("Camera Type", this.getCurrentCameraType());
     this.handleResize();
   }
   getCurrentCameraType() {
@@ -46422,6 +46669,7 @@ class Load3d {
   toggleGrid(showGrid) {
     if (this.gridHelper) {
       this.gridHelper.visible = showGrid;
+      this.storeNodeProperty("Show Grid", showGrid);
     }
   }
   setLightIntensity(intensity) {
@@ -46447,6 +46695,9 @@ class Load3d {
       const delta = this.clock.getDelta();
       if (this.viewHelper.animating) {
         this.viewHelper.update(delta);
+        if (!this.viewHelper.animating) {
+          this.storeNodeProperty("Camera Info", this.getCameraState());
+        }
       }
       this.renderer.clear();
       this.controls.update();
@@ -46724,6 +46975,9 @@ class Load3d {
   setBackgroundColor(color) {
     this.renderer.setClearColor(new Color(color));
     this.renderer.render(this.scene, this.activeCamera);
+    if (this.bgColorInput) {
+      this.bgColorInput.value = color;
+    }
   }
 }
 class Load3dAnimation extends Load3d {
@@ -46736,8 +46990,143 @@ class Load3dAnimation extends Load3d {
   selectedAnimationIndex = 0;
   isAnimationPlaying = false;
   animationSpeed = 1;
+  playPauseContainer = {};
+  animationSelect = {};
+  speedSelect = {};
   constructor(container) {
     super(container);
+    this.createPlayPauseButton(container);
+    this.createAnimationList(container);
+    this.createSpeedSelect(container);
+  }
+  createAnimationList(container) {
+    this.animationSelect = document.createElement("select");
+    Object.assign(this.animationSelect.style, {
+      position: "absolute",
+      top: "3px",
+      left: "50%",
+      transform: "translateX(15px)",
+      width: "90px",
+      height: "20px",
+      backgroundColor: "rgba(0, 0, 0, 0.3)",
+      color: "white",
+      border: "none",
+      borderRadius: "4px",
+      fontSize: "12px",
+      padding: "0 8px",
+      cursor: "pointer",
+      display: "none",
+      outline: "none"
+    });
+    this.animationSelect.addEventListener("mouseenter", () => {
+      this.animationSelect.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+    });
+    this.animationSelect.addEventListener("mouseleave", () => {
+      this.animationSelect.style.backgroundColor = "rgba(0, 0, 0, 0.3)";
+    });
+    this.animationSelect.addEventListener("change", (event) => {
+      const select = event.target;
+      this.updateSelectedAnimation(select.selectedIndex);
+    });
+    container.appendChild(this.animationSelect);
+  }
+  updateAnimationList() {
+    this.animationSelect.innerHTML = "";
+    this.animationClips.forEach((clip, index) => {
+      const option = document.createElement("option");
+      option.value = index.toString();
+      option.text = clip.name || `Animation ${index + 1}`;
+      option.selected = index === this.selectedAnimationIndex;
+      this.animationSelect.appendChild(option);
+    });
+  }
+  createPlayPauseButton(container) {
+    this.playPauseContainer = document.createElement("div");
+    this.playPauseContainer.style.position = "absolute";
+    this.playPauseContainer.style.top = "3px";
+    this.playPauseContainer.style.left = "50%";
+    this.playPauseContainer.style.transform = "translateX(-50%)";
+    this.playPauseContainer.style.width = "20px";
+    this.playPauseContainer.style.height = "20px";
+    this.playPauseContainer.style.cursor = "pointer";
+    this.playPauseContainer.style.alignItems = "center";
+    this.playPauseContainer.style.justifyContent = "center";
+    const updateButtonState = /* @__PURE__ */ __name(() => {
+      const icon = this.playPauseContainer.querySelector("svg");
+      if (icon) {
+        if (this.isAnimationPlaying) {
+          icon.innerHTML = `
+            <path d="M6 4h4v16H6zM14 4h4v16h-4z"/>
+          `;
+          this.playPauseContainer.title = "Pause Animation";
+        } else {
+          icon.innerHTML = `
+            <path d="M8 5v14l11-7z"/>
+          `;
+          this.playPauseContainer.title = "Play Animation";
+        }
+      }
+    }, "updateButtonState");
+    const playIcon = document.createElement("div");
+    playIcon.innerHTML = `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+    `;
+    this.playPauseContainer.addEventListener("mouseenter", () => {
+      this.playPauseContainer.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+    });
+    this.playPauseContainer.addEventListener("mouseleave", () => {
+      this.playPauseContainer.style.backgroundColor = "transparent";
+    });
+    this.playPauseContainer.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.toggleAnimation();
+      updateButtonState();
+    });
+    this.playPauseContainer.appendChild(playIcon);
+    container.appendChild(this.playPauseContainer);
+    this.playPauseContainer.style.display = "none";
+  }
+  createSpeedSelect(container) {
+    this.speedSelect = document.createElement("select");
+    Object.assign(this.speedSelect.style, {
+      position: "absolute",
+      top: "3px",
+      left: "50%",
+      transform: "translateX(-75px)",
+      width: "60px",
+      height: "20px",
+      backgroundColor: "rgba(0, 0, 0, 0.3)",
+      color: "white",
+      border: "none",
+      borderRadius: "4px",
+      fontSize: "12px",
+      padding: "0 8px",
+      cursor: "pointer",
+      display: "none",
+      outline: "none"
+    });
+    const speeds = [0.1, 0.5, 1, 1.5, 2];
+    speeds.forEach((speed) => {
+      const option = document.createElement("option");
+      option.value = speed.toString();
+      option.text = `${speed}x`;
+      option.selected = speed === 1;
+      this.speedSelect.appendChild(option);
+    });
+    this.speedSelect.addEventListener("mouseenter", () => {
+      this.speedSelect.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+    });
+    this.speedSelect.addEventListener("mouseleave", () => {
+      this.speedSelect.style.backgroundColor = "rgba(0, 0, 0, 0.3)";
+    });
+    this.speedSelect.addEventListener("change", (event) => {
+      const select = event.target;
+      const newSpeed = parseFloat(select.value);
+      this.setAnimationSpeed(newSpeed);
+    });
+    container.appendChild(this.speedSelect);
   }
   async setupModel(model) {
     await super.setupModel(model);
@@ -46761,6 +47150,21 @@ class Load3dAnimation extends Load3d {
       if (this.animationClips.length > 0) {
         this.updateSelectedAnimation(0);
       }
+    }
+    if (this.animationClips.length > 0) {
+      this.playPauseContainer.style.display = "block";
+    } else {
+      this.playPauseContainer.style.display = "none";
+    }
+    if (this.animationClips.length > 0) {
+      this.playPauseContainer.style.display = "block";
+      this.animationSelect.style.display = "block";
+      this.speedSelect.style.display = "block";
+      this.updateAnimationList();
+    } else {
+      this.playPauseContainer.style.display = "none";
+      this.animationSelect.style.display = "none";
+      this.speedSelect.style.display = "none";
     }
   }
   setAnimationSpeed(speed) {
@@ -46793,6 +47197,7 @@ class Load3dAnimation extends Load3d {
       action.paused = true;
     }
     this.animationActions = [action];
+    this.updateAnimationList();
   }
   clearModel() {
     if (this.currentAnimation) {
@@ -46807,6 +47212,14 @@ class Load3dAnimation extends Load3d {
     this.isAnimationPlaying = false;
     this.animationSpeed = 1;
     super.clearModel();
+    if (this.animationSelect) {
+      this.animationSelect.style.display = "none";
+      this.animationSelect.innerHTML = "";
+    }
+    if (this.speedSelect) {
+      this.speedSelect.style.display = "none";
+      this.speedSelect.value = "1";
+    }
   }
   getAnimationNames() {
     return this.animationClips.map((clip, index) => {
@@ -46819,6 +47232,16 @@ class Load3dAnimation extends Load3d {
       return;
     }
     this.isAnimationPlaying = play ?? !this.isAnimationPlaying;
+    const icon = this.playPauseContainer.querySelector("svg");
+    if (icon) {
+      if (this.isAnimationPlaying) {
+        icon.innerHTML = '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>';
+        this.playPauseContainer.title = "Pause Animation";
+      } else {
+        icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+        this.playPauseContainer.title = "Play Animation";
+      }
+    }
     this.animationActions.forEach((action) => {
       if (this.isAnimationPlaying) {
         action.paused = false;
@@ -46842,101 +47265,16 @@ class Load3dAnimation extends Load3d {
       this.renderer.render(this.scene, this.activeCamera);
       if (this.viewHelper.animating) {
         this.viewHelper.update(delta);
+        if (!this.viewHelper.animating) {
+          this.storeNodeProperty("Camera Info", this.getCameraState());
+        }
       }
       this.viewHelper.render(this.renderer);
     }, "animate");
     animate();
   }
 }
-function splitFilePath$1(path) {
-  const folder_separator = path.lastIndexOf("/");
-  if (folder_separator === -1) {
-    return ["", path];
-  }
-  return [
-    path.substring(0, folder_separator),
-    path.substring(folder_separator + 1)
-  ];
-}
-__name(splitFilePath$1, "splitFilePath$1");
-function getResourceURL$1(subfolder, filename, type = "input") {
-  const params = [
-    "filename=" + encodeURIComponent(filename),
-    "type=" + type,
-    "subfolder=" + subfolder,
-    app.getRandParam().substring(1)
-  ].join("&");
-  return `/view?${params}`;
-}
-__name(getResourceURL$1, "getResourceURL$1");
-const load3dCSSCLASS = `display: flex;
-    flex-direction: column;
-    background: transparent;
-    flex: 1;
-    position: relative;
-    overflow: hidden;`;
-const load3dCanvasCSSCLASS = `display: flex;
-    width: 100% !important;
-    height: 100% !important;`;
 const containerToLoad3D = /* @__PURE__ */ new Map();
-function configureLoad3D(load3d, loadFolder, modelWidget, material, bgColor, lightIntensity, upDirection, fov2, cameraState, postModelUpdateFunc) {
-  const createModelUpdateHandler = /* @__PURE__ */ __name(() => {
-    let isFirstLoad = true;
-    return async (value) => {
-      if (!value) return;
-      const filename = value;
-      const modelUrl = api.apiURL(
-        getResourceURL$1(...splitFilePath$1(filename), loadFolder)
-      );
-      await load3d.loadModel(modelUrl, filename);
-      load3d.setMaterialMode(
-        material.value
-      );
-      load3d.setUpDirection(
-        upDirection.value
-      );
-      if (postModelUpdateFunc) {
-        postModelUpdateFunc(load3d);
-      }
-      if (isFirstLoad && cameraState && typeof cameraState === "object") {
-        try {
-          load3d.setCameraState(cameraState);
-        } catch (error) {
-          console.warn("Failed to restore camera state:", error);
-        }
-        isFirstLoad = false;
-      }
-    };
-  }, "createModelUpdateHandler");
-  const onModelWidgetUpdate = createModelUpdateHandler();
-  if (modelWidget.value) {
-    onModelWidgetUpdate(modelWidget.value);
-  }
-  modelWidget.callback = onModelWidgetUpdate;
-  material.callback = (value) => {
-    load3d.setMaterialMode(value);
-  };
-  load3d.setMaterialMode(material.value);
-  load3d.setBackgroundColor(bgColor.value);
-  bgColor.callback = (value) => {
-    load3d.setBackgroundColor(value);
-  };
-  load3d.setLightIntensity(lightIntensity.value);
-  lightIntensity.callback = (value) => {
-    load3d.setLightIntensity(value);
-  };
-  upDirection.callback = (value) => {
-    load3d.setUpDirection(value);
-  };
-  load3d.setUpDirection(
-    upDirection.value
-  );
-  fov2.callback = (value) => {
-    load3d.setFOV(value);
-  };
-  load3d.setFOV(fov2.value);
-}
-__name(configureLoad3D, "configureLoad3D");
 app.registerExtension({
   name: "Comfy.Load3D",
   getCustomWidgets(app2) {
@@ -46974,7 +47312,7 @@ app.registerExtension({
             const modelWidget = node.widgets?.find(
               (w) => w.name === "model_file"
             );
-            const uploadPath = await uploadFile$1(
+            const uploadPath = await Load3dUtils.uploadFile(
               load3d,
               fileInput.files[0],
               fileInput
@@ -47008,19 +47346,6 @@ app.registerExtension({
       }
     };
   },
-  init() {
-    const style = document.createElement("style");
-    style.innerText = `
-        .comfy-load-3d {
-          ${load3dCSSCLASS}
-        }
-        
-        .comfy-load-3d canvas {
-          ${load3dCanvasCSSCLASS}
-        }
-      `;
-    document.head.appendChild(style);
-  },
   async nodeCreated(node) {
     if (node.constructor.comfyClass !== "Load3D") return;
     const [oldWidth, oldHeight] = node.size;
@@ -47029,11 +47354,11 @@ app.registerExtension({
     const sceneWidget = node.widgets.find((w2) => w2.name === "image");
     const container = sceneWidget.element;
     const load3d = containerToLoad3D.get(container.id);
+    load3d.setNode(node);
     const modelWidget = node.widgets.find(
       (w2) => w2.name === "model_file"
     );
     const material = node.widgets.find((w2) => w2.name === "material");
-    const bgColor = node.widgets.find((w2) => w2.name === "bg_color");
     const lightIntensity = node.widgets.find(
       (w2) => w2.name === "light_intensity"
     );
@@ -47041,22 +47366,12 @@ app.registerExtension({
       (w2) => w2.name === "up_direction"
     );
     const fov2 = node.widgets.find((w2) => w2.name === "fov");
-    let cameraState;
-    try {
-      const cameraInfo = node.properties["Camera Info"];
-      if (cameraInfo && typeof cameraInfo === "string" && cameraInfo.trim() !== "") {
-        cameraState = JSON.parse(cameraInfo);
-      }
-    } catch (error) {
-      console.warn("Failed to parse camera state:", error);
-      cameraState = void 0;
-    }
-    configureLoad3D(
-      load3d,
+    let cameraState = node.properties["Camera Info"];
+    const config = new Load3DConfiguration(load3d);
+    config.configure(
       "input",
       modelWidget,
       material,
-      bgColor,
       lightIntensity,
       upDirection,
       fov2,
@@ -47065,14 +47380,14 @@ app.registerExtension({
     const w = node.widgets.find((w2) => w2.name === "width");
     const h = node.widgets.find((w2) => w2.name === "height");
     sceneWidget.serializeValue = async () => {
-      node.properties["Camera Info"] = JSON.stringify(load3d.getCameraState());
+      node.properties["Camera Info"] = load3d.getCameraState();
       const { scene: imageData, mask: maskData } = await load3d.captureScene(
         w.value,
         h.value
       );
       const [data, dataMask] = await Promise.all([
-        uploadTempImage(imageData, "scene"),
-        uploadTempImage(maskData, "scene_mask")
+        Load3dUtils.uploadTempImage(imageData, "scene"),
+        Load3dUtils.uploadTempImage(maskData, "scene_mask")
       ]);
       return {
         image: `threed/${data.name} [temp]`,
@@ -47120,7 +47435,7 @@ app.registerExtension({
             const modelWidget = node.widgets?.find(
               (w) => w.name === "model_file"
             );
-            const uploadPath = await uploadFile$1(
+            const uploadPath = await Load3dUtils.uploadFile(
               load3d,
               fileInput.files[0],
               fileInput
@@ -47147,69 +47462,12 @@ app.registerExtension({
           if (modelWidget) {
             modelWidget.value = "";
           }
-          const animationSelect2 = node.widgets?.find(
-            (w) => w.name === "animation"
-          );
-          if (animationSelect2) {
-            animationSelect2.options.values = [];
-            animationSelect2.value = "";
-          }
-          const speedSelect = node.widgets?.find(
-            (w) => w.name === "animation_speed"
-          );
-          if (speedSelect) {
-            speedSelect.value = "1";
-          }
         });
-        node.addWidget(
-          "button",
-          "Play/Pause Animation",
-          "toggle_animation",
-          () => {
-            load3d.toggleAnimation();
-          }
-        );
-        const animationSelect = node.addWidget(
-          "combo",
-          "animation",
-          "",
-          () => "",
-          {
-            values: []
-          }
-        );
-        animationSelect.callback = (value) => {
-          const names = load3d.getAnimationNames();
-          const index = names.indexOf(value);
-          if (index !== -1) {
-            const wasPlaying = load3d.isAnimationPlaying;
-            if (wasPlaying) {
-              load3d.toggleAnimation(false);
-            }
-            load3d.updateSelectedAnimation(index);
-            if (wasPlaying) {
-              load3d.toggleAnimation(true);
-            }
-          }
-        };
         return {
           widget: node.addDOMWidget(inputName, "LOAD_3D_ANIMATION", container)
         };
       }
     };
-  },
-  init() {
-    const style = document.createElement("style");
-    style.innerText = `
-        .comfy-load-3d-animation {
-          ${load3dCSSCLASS}
-        }
-        
-        .comfy-load-3d-animation canvas {
-          ${load3dCanvasCSSCLASS}
-        }
-      `;
-    document.head.appendChild(style);
   },
   async nodeCreated(node) {
     if (node.constructor.comfyClass !== "Load3DAnimation") return;
@@ -47219,71 +47477,41 @@ app.registerExtension({
     const sceneWidget = node.widgets.find((w2) => w2.name === "image");
     const container = sceneWidget.element;
     const load3d = containerToLoad3D.get(container.id);
+    load3d.setNode(node);
     const modelWidget = node.widgets.find(
       (w2) => w2.name === "model_file"
     );
     const material = node.widgets.find((w2) => w2.name === "material");
-    const bgColor = node.widgets.find((w2) => w2.name === "bg_color");
     const lightIntensity = node.widgets.find(
       (w2) => w2.name === "light_intensity"
     );
     const upDirection = node.widgets.find(
       (w2) => w2.name === "up_direction"
     );
-    const speedSelect = node.widgets.find(
-      (w2) => w2.name === "animation_speed"
-    );
-    speedSelect.callback = (value) => {
-      const load3d2 = containerToLoad3D.get(container.id);
-      if (load3d2) {
-        load3d2.setAnimationSpeed(parseFloat(value));
-      }
-    };
     const fov2 = node.widgets.find((w2) => w2.name === "fov");
-    let cameraState;
-    try {
-      const cameraInfo = node.properties["Camera Info"];
-      if (cameraInfo && typeof cameraInfo === "string" && cameraInfo.trim() !== "") {
-        cameraState = JSON.parse(cameraInfo);
-      }
-    } catch (error) {
-      console.warn("Failed to parse camera state:", error);
-      cameraState = void 0;
-    }
-    configureLoad3D(
-      load3d,
+    let cameraState = node.properties["Camera Info"];
+    const config = new Load3DConfiguration(load3d);
+    config.configure(
       "input",
       modelWidget,
       material,
-      bgColor,
       lightIntensity,
       upDirection,
       fov2,
-      cameraState,
-      (load3d2) => {
-        const animationLoad3d = load3d2;
-        const names = animationLoad3d.getAnimationNames();
-        const animationSelect = node.widgets.find(
-          (w2) => w2.name === "animation"
-        );
-        animationSelect.options.values = names;
-        if (names.length) {
-          animationSelect.value = names[0];
-        }
-      }
+      cameraState
     );
     const w = node.widgets.find((w2) => w2.name === "width");
     const h = node.widgets.find((w2) => w2.name === "height");
     sceneWidget.serializeValue = async () => {
-      node.properties["Camera Info"] = JSON.stringify(load3d.getCameraState());
+      node.properties["Camera Info"] = load3d.getCameraState();
       load3d.toggleAnimation(false);
       const { scene: imageData, mask: maskData } = await load3d.captureScene(
         w.value,
         h.value
       );
       const [data, dataMask] = await Promise.all([
-        uploadTempImage(imageData, "scene"),
-        uploadTempImage(maskData, "scene_mask")
+        Load3dUtils.uploadTempImage(imageData, "scene"),
+        Load3dUtils.uploadTempImage(maskData, "scene_mask")
       ]);
       return {
         image: `threed/${data.name} [temp]`,
@@ -47333,19 +47561,6 @@ app.registerExtension({
       }
     };
   },
-  init() {
-    const style = document.createElement("style");
-    style.innerText = `
-        .comfy-preview-3d {
-          ${load3dCSSCLASS}
-        }
-        
-        .comfy-preview-3d canvas {
-          ${load3dCanvasCSSCLASS}
-        }
-      `;
-    document.head.appendChild(style);
-  },
   async nodeCreated(node) {
     if (node.constructor.comfyClass !== "Preview3D") return;
     const [oldWidth, oldHeight] = node.size;
@@ -47354,11 +47569,11 @@ app.registerExtension({
     const sceneWidget = node.widgets.find((w) => w.name === "image");
     const container = sceneWidget.element;
     const load3d = containerToLoad3D.get(container.id);
+    load3d.setNode(node);
     const modelWidget = node.widgets.find(
       (w) => w.name === "model_file"
     );
     const material = node.widgets.find((w) => w.name === "material");
-    const bgColor = node.widgets.find((w) => w.name === "bg_color");
     const lightIntensity = node.widgets.find(
       (w) => w.name === "light_intensity"
     );
@@ -47376,12 +47591,100 @@ app.registerExtension({
         useToastStore().addAlert(msg);
       }
       modelWidget.value = filePath.replaceAll("\\", "/");
-      configureLoad3D(
-        load3d,
+      const config = new Load3DConfiguration(load3d);
+      config.configure(
         "output",
         modelWidget,
         material,
-        bgColor,
+        lightIntensity,
+        upDirection,
+        fov2
+      );
+    };
+  }
+});
+app.registerExtension({
+  name: "Comfy.Preview3DAnimation",
+  async beforeRegisterNodeDef(nodeType, nodeData) {
+    if (
+      // @ts-expect-error ComfyNode
+      ["Preview3DAnimation"].includes(nodeType.comfyClass)
+    ) {
+      nodeData.input.required.image = ["PREVIEW_3D_ANIMATION"];
+    }
+  },
+  getCustomWidgets(app2) {
+    return {
+      PREVIEW_3D_ANIMATION(node, inputName) {
+        let load3dNode = app2.graph._nodes.filter(
+          (wi) => wi.type == "Preview3DAnimation"
+        );
+        const container = document.createElement("div");
+        container.id = `comfy-preview-3d-animation-${load3dNode.length}`;
+        container.classList.add("comfy-preview-3d-animation");
+        const load3d = new Load3dAnimation(container);
+        containerToLoad3D.set(container.id, load3d);
+        node.onResize = function() {
+          if (load3d) {
+            load3d.handleResize();
+          }
+        };
+        const origOnRemoved = node.onRemoved;
+        node.onRemoved = function() {
+          if (load3d) {
+            load3d.remove();
+          }
+          containerToLoad3D.delete(container.id);
+          origOnRemoved?.apply(this, []);
+        };
+        node.onDrawBackground = function() {
+          load3d.renderer.domElement.hidden = this.flags.collapsed ?? false;
+        };
+        return {
+          widget: node.addDOMWidget(
+            inputName,
+            "PREVIEW_3D_ANIMATION",
+            container
+          )
+        };
+      }
+    };
+  },
+  async nodeCreated(node) {
+    if (node.constructor.comfyClass !== "Preview3DAnimation") return;
+    const [oldWidth, oldHeight] = node.size;
+    node.setSize([Math.max(oldWidth, 300), Math.max(oldHeight, 550)]);
+    await nextTick();
+    const sceneWidget = node.widgets.find((w) => w.name === "image");
+    const container = sceneWidget.element;
+    const load3d = containerToLoad3D.get(container.id);
+    load3d.setNode(node);
+    const modelWidget = node.widgets.find(
+      (w) => w.name === "model_file"
+    );
+    const material = node.widgets.find((w) => w.name === "material");
+    const lightIntensity = node.widgets.find(
+      (w) => w.name === "light_intensity"
+    );
+    const upDirection = node.widgets.find(
+      (w) => w.name === "up_direction"
+    );
+    const fov2 = node.widgets.find((w) => w.name === "fov");
+    const onExecuted = node.onExecuted;
+    node.onExecuted = function(message) {
+      onExecuted?.apply(this, arguments);
+      let filePath = message.model_file[0];
+      if (!filePath) {
+        const msg = "unable to get model file path.";
+        console.error(msg);
+        useToastStore().addAlert(msg);
+      }
+      modelWidget.value = filePath.replaceAll("\\", "/");
+      const config = new Load3DConfiguration(load3d);
+      config.configure(
+        "output",
+        modelWidget,
+        material,
         lightIntensity,
         upDirection,
         fov2
@@ -53546,4 +53849,4 @@ app.registerExtension({
     });
   }
 });
-//# sourceMappingURL=index-je62U6DH.js.map
+//# sourceMappingURL=index-BPn8eYlx.js.map
