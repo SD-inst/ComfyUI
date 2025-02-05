@@ -667,11 +667,6 @@ class PromptServer():
 
         @routes.post("/interrupt")
         async def post_interrupt(request):
-            nodes.interrupt_processing()
-            return web.Response(status=200)
-
-        @routes.post("/interrupt_id")
-        async def post_interrupt_id(request):
             json_data = await request.json()
             if "id" in json_data:
                 id = json_data["id"]
@@ -681,7 +676,8 @@ class PromptServer():
 
                 delete_func = lambda a: a[1] == id
                 self.prompt_queue.delete_queue_item(delete_func)
-
+            else:
+                nodes.interrupt_processing()
             return web.Response(status=200)
 
         @routes.post("/free")
