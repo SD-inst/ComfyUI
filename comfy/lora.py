@@ -394,6 +394,14 @@ def model_lora_keys_unet(model, key_map={}):
                 key_map["{}".format(key_lora)] = k
 
     if isinstance(model, comfy.model_base.HunyuanVideo):
+        diffusers_keys = comfy.utils.flux_to_diffusers(model.model_config.unet_config, output_prefix="diffusion_model.")
+        for j in diffusers_keys:
+            if j.endswith(".weight"):
+                to = diffusers_keys[j]
+                key_map["transformer.{}".format(j[:-len(".weight")])] = to #simpletrainer and probably regular diffusers flux lora format
+                key_map["lycoris_{}".format(j[:-len(".weight")].replace(".", "_"))] = to #simpletrainer lycoris
+                key_map["lora_transformer_{}".format(j[:-len(".weight")].replace(".", "_"))] = to #onetrainer
+
         for k in sdk:
             if k.startswith("diffusion_model.") and k.endswith(".weight"):
                 # diffusion-pipe lora format
