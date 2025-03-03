@@ -413,6 +413,12 @@ def model_lora_keys_unet(model, key_map={}):
                 key_map["transformer.{}".format(key_lora)] = k
                 key_map["diffusion_model.{}".format(key_lora)] = k  # Old loras
 
+        for k in list(key_map):
+            if k.endswith("_mlp_0"):
+                key_map[k.replace("_mlp_0", "_mlp_fc1")] = key_map[k]
+            if k.endswith("_mlp_2"):
+                key_map[k.replace("_mlp_2", "_mlp_fc2")] = key_map[k]
+
     return key_map
 
 
