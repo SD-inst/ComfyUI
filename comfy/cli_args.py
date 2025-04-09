@@ -79,6 +79,7 @@ fpte_group.add_argument("--fp8_e4m3fn-text-enc", action="store_true", help="Stor
 fpte_group.add_argument("--fp8_e5m2-text-enc", action="store_true", help="Store text encoder weights in fp8 (e5m2 variant).")
 fpte_group.add_argument("--fp16-text-enc", action="store_true", help="Store text encoder weights in fp16.")
 fpte_group.add_argument("--fp32-text-enc", action="store_true", help="Store text encoder weights in fp32.")
+fpte_group.add_argument("--bf16-text-enc", action="store_true", help="Store text encoder weights in bf16.")
 
 parser.add_argument("--force-channels-last", action="store_true", help="Force channels last format when inferencing the models.")
 
@@ -106,6 +107,7 @@ attn_group.add_argument("--use-split-cross-attention", action="store_true", help
 attn_group.add_argument("--use-quad-cross-attention", action="store_true", help="Use the sub-quadratic cross attention optimization . Ignored when xformers is used.")
 attn_group.add_argument("--use-pytorch-cross-attention", action="store_true", help="Use the new pytorch 2.0 cross attention function.")
 attn_group.add_argument("--use-sage-attention", action="store_true", help="Use sage attention.")
+attn_group.add_argument("--use-flash-attention", action="store_true", help="Use FlashAttention.")
 
 parser.add_argument("--disable-xformers", action="store_true", help="Disable xformers.")
 
