@@ -2258,8 +2258,11 @@ def init_builtin_extra_nodes():
         "nodes_optimalsteps.py",
         "nodes_hidream.py",
         "nodes_fresca.py",
+        "nodes_apg.py",
         "nodes_preview_any.py",
         "nodes_ace.py",
+        "nodes_string.py",
+        "nodes_camera_trajectory.py",
     ]
 
     import_failed = []
