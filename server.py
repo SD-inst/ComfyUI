@@ -698,6 +698,7 @@ class PromptServer():
 
         @routes.post("/free")
         async def post_free(request):
+            logging.info("Received /free request")
             json_data = await request.json()
             unload_models = json_data.get("unload_models", False)
             free_memory = json_data.get("free_memory", False)
@@ -705,6 +706,7 @@ class PromptServer():
                 self.prompt_queue.set_flag("unload_models", unload_models)
             if free_memory:
                 self.prompt_queue.set_flag("free_memory", free_memory)
+            logging.info("Queued /free request")
             return web.Response(status=200)
 
         @routes.post("/history")

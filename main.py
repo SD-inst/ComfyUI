@@ -195,11 +195,14 @@ def prompt_worker(q, server_instance):
         free_memory = flags.get("free_memory", False)
 
         if flags.get("unload_models", free_memory):
+            logging.info("Processing unload_models")
             comfy.model_management.unload_all_models()
             need_gc = True
             last_gc_collect = 0
+            logging.info("unload_models complete")
 
         if free_memory:
+            logging.info("Processing free_memory")
             e.reset()
             need_gc = True
             last_gc_collect = 0
@@ -212,6 +215,7 @@ def prompt_worker(q, server_instance):
                 last_gc_collect = current_time
                 need_gc = False
                 hook_breaker_ac10a0.restore_functions()
+                logging.info("free_memory complete")
 
 
 async def run(server_instance, address='', port=8188, verbose=True, call_on_start=None):
