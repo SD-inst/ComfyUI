@@ -190,6 +190,13 @@ def prompt_worker(q, server_instance):
             logging.info("Prompt executed in {:.2f} seconds".format(execution_time))
             requests.post('http://authproxy:7860/cui/leave', timeout=5)
 
+            # Log Time in a more readable way after 10 minutes
+            if execution_time > 600:
+                execution_time = time.strftime("%H:%M:%S", time.gmtime(execution_time))
+                logging.info(f"Prompt executed in {execution_time}")
+            else:
+                logging.info("Prompt executed in {:.2f} seconds".format(execution_time))
+
         flags = q.get_flags()
         free_memory = flags.get("free_memory", False)
 
