@@ -144,6 +144,7 @@ class PerformanceFeature(enum.Enum):
 parser.add_argument("--fast", nargs="*", type=PerformanceFeature, help="Enable some untested and potentially quality deteriorating optimizations. --fast with no arguments enables everything. You can pass a list specific optimizations if you only want to enable specific ones. Current valid optimizations: fp16_accumulation fp8_matrix_mult cublas_ops")
 
 parser.add_argument("--mmap-torch-files", action="store_true", help="Use mmap when loading ckpt/pt files.")
+parser.add_argument("--disable-mmap", action="store_true", help="Don't use mmap when loading safetensors.")
 
 parser.add_argument("--dont-print-server", action="store_true", help="Don't print server output.")
 parser.add_argument("--quick-test-for-ci", action="store_true", help="Quick test for CI.")
@@ -151,6 +152,7 @@ parser.add_argument("--windows-standalone-build", action="store_true", help="Win
 
 parser.add_argument("--disable-metadata", action="store_true", help="Disable saving prompt metadata in files.")
 parser.add_argument("--disable-all-custom-nodes", action="store_true", help="Disable loading all custom nodes.")
+parser.add_argument("--whitelist-custom-nodes", type=str, nargs='+', default=[], help="Specify custom node folders to load even when --disable-all-custom-nodes is enabled.")
 parser.add_argument("--disable-api-nodes", action="store_true", help="Disable loading all api nodes.")
 
 parser.add_argument("--multi-user", action="store_true", help="Enables per-user storage.")
