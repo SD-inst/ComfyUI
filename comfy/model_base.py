@@ -106,10 +106,12 @@ def model_sampling(model_config, model_type):
     return ModelSampling(model_config)
 
 
-def convert_tensor(extra, dtype):
+def convert_tensor(extra, dtype, device):
     if hasattr(extra, "dtype"):
         if extra.dtype != torch.int and extra.dtype != torch.long:
-            extra = extra.to(dtype)
+            extra = extra.to(dtype=dtype, device=device)
+        else:
+            extra = extra.to(device=device)
     return extra
 
 
@@ -169,20 +171,21 @@ class BaseModel(torch.nn.Module):
             dtype = self.manual_cast_dtype
 
         xc = xc.to(dtype)
+        device = xc.device
         t = self.model_sampling.timestep(t).float()
         if context is not None:
-            context = context.to(dtype)
+            context = context.to(dtype=dtype, device=device)
 
         extra_conds = {}
         for o in kwargs:
             extra = kwargs[o]
 
             if hasattr(extra, "dtype"):
-                extra = convert_tensor(extra, dtype)
+                extra = convert_tensor(extra, dtype, device)
             elif isinstance(extra, list):
                 ex = []
                 for ext in extra:
-                    ex.append(convert_tensor(ext, dtype))
+                    ex.append(convert_tensor(ext, dtype, device))
                 extra = ex
             extra_conds[o] = extra
 
@@ -1202,7 +1205,7 @@ class WAN22(BaseModel):
     def process_timestep(self, timestep, x, denoise_mask=None, **kwargs):
         if denoise_mask is None:
             return timestep
-        temp_ts = (torch.mean(denoise_mask[:, :, :, ::2, ::2], dim=1, keepdim=True) * timestep.view([timestep.shape[0]] + [1] * (denoise_mask.ndim - 1))).reshape(timestep.shape[0], -1)
+        temp_ts = (torch.mean(denoise_mask[:, :, :, :, :], dim=(1, 3, 4), keepdim=True) * timestep.view([timestep.shape[0]] + [1] * (denoise_mask.ndim - 1))).reshape(timestep.shape[0], -1)
         return temp_ts
 
     def scale_latent_inpaint(self, sigma, noise, latent_image, **kwargs):
