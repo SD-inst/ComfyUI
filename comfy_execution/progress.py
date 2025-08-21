@@ -182,7 +182,9 @@ class WebUIProgressHandler(ProgressHandler):
 
         # Send a combined progress_state message with all node states
         self.server_instance.send_sync(
-            "progress_state", {"prompt_id": prompt_id, "nodes": active_nodes}
+            "progress_state",
+            {"prompt_id": prompt_id, "nodes": active_nodes},
+            self.server_instance.client_id,
         )
 
     @override
