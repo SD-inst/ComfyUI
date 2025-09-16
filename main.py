@@ -114,7 +114,6 @@ import requests
 
 if os.name == "nt":
     os.environ['MIMALLOC_PURGE_DELAY'] = '0'
-    logging.getLogger("xformers").addFilter(lambda record: 'A matching Triton is not available' not in record.getMessage())
 
 if __name__ == "__main__":
     if args.default_device is not None:
