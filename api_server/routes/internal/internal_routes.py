@@ -21,26 +21,18 @@ class InternalRoutes:
     def setup_routes(self):
         @self.routes.get('/logs')
         async def get_logs(request):
-            return web.json_response("".join([(l["t"] + " - " + l["m"]) for l in app.logger.get_logs()]))
+            return web.json_response("")
 
         @self.routes.get('/logs/raw')
         async def get_raw_logs(request):
             self.terminal_service.update_size()
             return web.json_response({
-                "entries": list(app.logger.get_logs()),
+                "entries": list(),
                 "size": {"cols": self.terminal_service.cols, "rows": self.terminal_service.rows}
             })
 
         @self.routes.patch('/logs/subscribe')
         async def subscribe_logs(request):
-            json_data = await request.json()
-            client_id = json_data["clientId"]
-            enabled = json_data["enabled"]
-            if enabled:
-                self.terminal_service.subscribe(client_id)
-            else:
-                self.terminal_service.unsubscribe(client_id)
-
             return web.Response(status=200)
 
 
@@ -53,17 +45,7 @@ class InternalRoutes:
 
         @self.routes.get('/files/{directory_type}')
         async def get_files(request: web.Request) -> web.Response:
-            directory_type = request.match_info['directory_type']
-            if directory_type not in ("output", "input", "temp"):
-                return web.json_response({"error": "Invalid directory type"}, status=400)
-
-            directory = get_directory_by_type(directory_type)
-            sorted_files = sorted(
-                (entry for entry in os.scandir(directory) if entry.is_file()),
-                key=lambda entry: -entry.stat().st_mtime
-            )
-            return web.json_response([entry.name for entry in sorted_files], status=200)
-
+            return web.json_response([], status=200)
 
     def get_app(self):
         if self._app is None:
