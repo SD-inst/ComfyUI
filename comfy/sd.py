@@ -54,6 +54,7 @@ import comfy.text_encoders.qwen_image
 import comfy.text_encoders.hunyuan_image
 import comfy.text_encoders.z_image
 import comfy.text_encoders.ovis
+import comfy.text_encoders.kandinsky5
 
 import comfy.model_patcher
 import comfy.lora
@@ -98,7 +99,7 @@ def load_lora_for_models(model, clip, lora, strength_model, strength_clip):
 
 
 class CLIP:
-    def __init__(self, target=None, embedding_directory=None, no_init=False, tokenizer_data={}, parameters=0, model_options={}):
+    def __init__(self, target=None, embedding_directory=None, no_init=False, tokenizer_data={}, parameters=0, state_dict=[], model_options={}):
         if no_init:
             return
         params = target.params.copy()
@@ -126,9 +127,32 @@ class CLIP:
 
         self.tokenizer = tokenizer(embedding_directory=embedding_directory, tokenizer_data=tokenizer_data)
         self.patcher = comfy.model_patcher.ModelPatcher(self.cond_stage_model, load_device=load_device, offload_device=offload_device)
+        #Match torch.float32 hardcode upcast in TE implemention
+        self.patcher.set_model_compute_dtype(torch.float32)
         self.patcher.hook_mode = comfy.hooks.EnumHookMode.MinVram
         self.patcher.is_clip = True
         self.apply_hooks_to_conds = None
+        if len(state_dict) > 0:
+            if isinstance(state_dict, list):
+                for c in state_dict:
+                    m, u = self.load_sd(c)
+                    if len(m) > 0:
+                        logging.warning("clip missing: {}".format(m))
+
+                    if len(u) > 0:
+                        logging.debug("clip unexpected: {}".format(u))
+            else:
+                m, u = self.load_sd(state_dict, full_model=True)
+                if len(m) > 0:
+                    m_filter = list(filter(lambda a: ".logit_scale" not in a and ".transformer.text_projection.weight" not in a, m))
+                    if len(m_filter) > 0:
+                        logging.warning("clip missing: {}".format(m))
+                    else:
+                        logging.debug("clip missing: {}".format(m))
+
+                if len(u) > 0:
+                    logging.debug("clip unexpected {}:".format(u))
+
         if params['device'] == load_device:
             model_management.load_models_gpu([self.patcher], force_full_load=True)
         self.layer_idx = None
@@ -297,6 +321,7 @@ class VAE:
         self.latent_channels = 4
         self.latent_dim = 2
         self.output_channels = 3
+        self.pad_channel_value = None
         self.process_input = lambda image: image * 2.0 - 1.0
         self.process_output = lambda image: torch.clamp((image + 1.0) / 2.0, min=0.0, max=1.0)
         self.working_dtypes = [torch.bfloat16, torch.float32]
@@ -411,6 +436,7 @@ class VAE:
                 self.memory_used_decode = lambda shape, dtype: (1000 * shape[2] * 2048) * model_management.dtype_size(dtype)
                 self.latent_channels = 64
                 self.output_channels = 2
+                self.pad_channel_value = "replicate"
                 self.upscale_ratio = 2048
                 self.downscale_ratio =  2048
                 self.latent_dim = 1
@@ -522,11 +548,15 @@ class VAE:
                     self.downscale_index_formula = (4, 8, 8)
                     self.latent_dim = 3
                     self.latent_channels = 16
-                    ddconfig = {"dim": dim, "z_dim": self.latent_channels, "dim_mult": [1, 2, 4, 4], "num_res_blocks": 2, "attn_scales": [], "temperal_downsample": [False, True, True], "dropout": 0.0}
+                    self.output_channels = sd["encoder.conv1.weight"].shape[1]
+                    self.pad_channel_value = 1.0
+                    ddconfig = {"dim": dim, "z_dim": self.latent_channels, "dim_mult": [1, 2, 4, 4], "num_res_blocks": 2, "attn_scales": [], "temperal_downsample": [False, True, True], "image_channels": self.output_channels, "dropout": 0.0}
                     self.first_stage_model = comfy.ldm.wan.vae.WanVAE(**ddconfig)
                     self.working_dtypes = [torch.bfloat16, torch.float16, torch.float32]
-                    self.memory_used_encode = lambda shape, dtype: 6000 * shape[3] * shape[4] * model_management.dtype_size(dtype)
-                    self.memory_used_decode = lambda shape, dtype: 7000 * shape[3] * shape[4] * (8 * 8) * model_management.dtype_size(dtype)
+                    self.memory_used_encode = lambda shape, dtype: (1500 if shape[2]<=4 else 6000) * shape[3] * shape[4] * model_management.dtype_size(dtype)
+                    self.memory_used_decode = lambda shape, dtype: (2200 if shape[2]<=4 else 7000) * shape[3] * shape[4] * (8*8) * model_management.dtype_size(dtype)
+
+
             # Hunyuan 3d v2 2.0 & 2.1
             elif "geo_decoder.cross_attn_decoder.ln_1.bias" in sd:
 
@@ -556,6 +586,7 @@ class VAE:
                 self.memory_used_decode = lambda shape, dtype: (shape[2] * shape[3] * 87000) * model_management.dtype_size(dtype)
                 self.latent_channels = 8
                 self.output_channels = 2
+                self.pad_channel_value = "replicate"
                 self.upscale_ratio = 4096
                 self.downscale_ratio = 4096
                 self.latent_dim = 2
@@ -664,17 +695,28 @@ class VAE:
             raise RuntimeError("ERROR: VAE is invalid: None\n\nIf the VAE is from a checkpoint loader node your checkpoint does not contain a valid VAE.")
 
     def vae_encode_crop_pixels(self, pixels):
-        if not self.crop_input:
-            return pixels
+        if self.crop_input:
+            downscale_ratio = self.spacial_compression_encode()
 
-        downscale_ratio = self.spacial_compression_encode()
+            dims = pixels.shape[1:-1]
+            for d in range(len(dims)):
+                x = (dims[d] // downscale_ratio) * downscale_ratio
+                x_offset = (dims[d] % downscale_ratio) // 2
+                if x != dims[d]:
+                    pixels = pixels.narrow(d + 1, x_offset, x)
 
-        dims = pixels.shape[1:-1]
-        for d in range(len(dims)):
-            x = (dims[d] // downscale_ratio) * downscale_ratio
-            x_offset = (dims[d] % downscale_ratio) // 2
-            if x != dims[d]:
-                pixels = pixels.narrow(d + 1, x_offset, x)
+        if pixels.shape[-1] > self.output_channels:
+            pixels = pixels[..., :self.output_channels]
+        elif pixels.shape[-1] < self.output_channels:
+            if self.pad_channel_value is not None:
+                if isinstance(self.pad_channel_value, str):
+                    mode = self.pad_channel_value
+                    value = None
+                else:
+                    mode = "constant"
+                    value = self.pad_channel_value
+
+                pixels = torch.nn.functional.pad(pixels, (0, self.output_channels - pixels.shape[-1]), mode=mode, value=value)
         return pixels
 
     def decode_tiled_(self, samples, tile_x=64, tile_y=64, overlap = 16):
@@ -745,6 +787,8 @@ class VAE:
         self.throw_exception_if_invalid()
         pixel_samples = None
         do_tile = False
+        if self.latent_dim == 2 and samples_in.ndim == 5:
+            samples_in = samples_in[:, :, 0]
         try:
             memory_used = self.memory_used_decode(samples_in.shape, self.vae_dtype)
             model_management.load_models_gpu([self.patcher], memory_required=memory_used, force_full_load=self.disable_offload)
@@ -962,16 +1006,16 @@ class CLIPType(Enum):
     HUNYUAN_IMAGE = 19
     HUNYUAN_VIDEO_15 = 20
     OVIS = 21
+    KANDINSKY5 = 22
+    KANDINSKY5_IMAGE = 23
 
 
 def load_clip(ckpt_paths, embedding_directory=None, clip_type=CLIPType.STABLE_DIFFUSION, model_options={}):
     clip_data = []
     for p in ckpt_paths:
         sd, metadata = comfy.utils.load_torch_file(p, safe_load=True, return_metadata=True)
-        if metadata is not None:
-            quant_metadata = metadata.get("_quantization_metadata", None)
-            if quant_metadata is not None:
-                sd["_quantization_metadata"] = quant_metadata
+        if model_options.get("custom_operations", None) is None:
+            sd, metadata = comfy.utils.convert_old_quants(sd, model_prefix="", metadata=metadata)
         clip_data.append(sd)
     return load_text_encoder_state_dicts(clip_data, embedding_directory=embedding_directory, clip_type=clip_type, model_options=model_options)
 
@@ -1088,7 +1132,7 @@ def load_text_encoder_state_dicts(state_dicts=[], embedding_directory=None, clip
                 clip_target.clip = comfy.text_encoders.sd3_clip.sd3_clip(clip_l=False, clip_g=True, t5=False)
                 clip_target.tokenizer = comfy.text_encoders.sd3_clip.SD3Tokenizer
             elif clip_type == CLIPType.HIDREAM:
-                clip_target.clip = comfy.text_encoders.hidream.hidream_clip(clip_l=False, clip_g=True, t5=False, llama=False, dtype_t5=None, dtype_llama=None, t5xxl_scaled_fp8=None, llama_scaled_fp8=None)
+                clip_target.clip = comfy.text_encoders.hidream.hidream_clip(clip_l=False, clip_g=True, t5=False, llama=False, dtype_t5=None, dtype_llama=None)
                 clip_target.tokenizer = comfy.text_encoders.hidream.HiDreamTokenizer
             else:
                 clip_target.clip = sdxl_clip.SDXLRefinerClipModel
@@ -1112,7 +1156,7 @@ def load_text_encoder_state_dicts(state_dicts=[], embedding_directory=None, clip
                 tokenizer_data["spiece_model"] = clip_data[0].get("spiece_model", None)
             elif clip_type == CLIPType.HIDREAM:
                 clip_target.clip = comfy.text_encoders.hidream.hidream_clip(**t5xxl_detect(clip_data),
-                                                                        clip_l=False, clip_g=False, t5=True, llama=False, dtype_llama=None, llama_scaled_fp8=None)
+                                                                        clip_l=False, clip_g=False, t5=True, llama=False, dtype_llama=None)
                 clip_target.tokenizer = comfy.text_encoders.hidream.HiDreamTokenizer
             else: #CLIPType.MOCHI
                 clip_target.clip = comfy.text_encoders.genmo.mochi_te(**t5xxl_detect(clip_data))
@@ -1141,7 +1185,7 @@ def load_text_encoder_state_dicts(state_dicts=[], embedding_directory=None, clip
             tokenizer_data["spiece_model"] = clip_data[0].get("spiece_model", None)
         elif te_model == TEModel.LLAMA3_8:
             clip_target.clip = comfy.text_encoders.hidream.hidream_clip(**llama_detect(clip_data),
-                                                                        clip_l=False, clip_g=False, t5=False, llama=True, dtype_t5=None, t5xxl_scaled_fp8=None)
+                                                                        clip_l=False, clip_g=False, t5=False, llama=True, dtype_t5=None)
             clip_target.tokenizer = comfy.text_encoders.hidream.HiDreamTokenizer
         elif te_model == TEModel.QWEN25_3B:
             clip_target.clip = comfy.text_encoders.omnigen2.te(**llama_detect(clip_data))
@@ -1169,7 +1213,7 @@ def load_text_encoder_state_dicts(state_dicts=[], embedding_directory=None, clip
                 clip_target.clip = comfy.text_encoders.sd3_clip.sd3_clip(clip_l=True, clip_g=False, t5=False)
                 clip_target.tokenizer = comfy.text_encoders.sd3_clip.SD3Tokenizer
             elif clip_type == CLIPType.HIDREAM:
-                clip_target.clip = comfy.text_encoders.hidream.hidream_clip(clip_l=True, clip_g=False, t5=False, llama=False, dtype_t5=None, dtype_llama=None, t5xxl_scaled_fp8=None, llama_scaled_fp8=None)
+                clip_target.clip = comfy.text_encoders.hidream.hidream_clip(clip_l=True, clip_g=False, t5=False, llama=False, dtype_t5=None, dtype_llama=None)
                 clip_target.tokenizer = comfy.text_encoders.hidream.HiDreamTokenizer
             else:
                 clip_target.clip = sd1_clip.SD1ClipModel
@@ -1212,6 +1256,12 @@ def load_text_encoder_state_dicts(state_dicts=[], embedding_directory=None, clip
         elif clip_type == CLIPType.HUNYUAN_VIDEO_15:
             clip_target.clip = comfy.text_encoders.hunyuan_image.te(**llama_detect(clip_data))
             clip_target.tokenizer = comfy.text_encoders.hunyuan_video.HunyuanVideo15Tokenizer
+        elif clip_type == CLIPType.KANDINSKY5:
+            clip_target.clip = comfy.text_encoders.kandinsky5.te(**llama_detect(clip_data))
+            clip_target.tokenizer = comfy.text_encoders.kandinsky5.Kandinsky5Tokenizer
+        elif clip_type == CLIPType.KANDINSKY5_IMAGE:
+            clip_target.clip = comfy.text_encoders.kandinsky5.te(**llama_detect(clip_data))
+            clip_target.tokenizer = comfy.text_encoders.kandinsky5.Kandinsky5TokenizerImage
         else:
             clip_target.clip = sdxl_clip.SDXLClipModel
             clip_target.tokenizer = sdxl_clip.SDXLTokenizer
@@ -1224,19 +1274,10 @@ def load_text_encoder_state_dicts(state_dicts=[], embedding_directory=None, clip
 
     parameters = 0
     for c in clip_data:
-        if "_quantization_metadata" in c:
-            c.pop("_quantization_metadata")
         parameters += comfy.utils.calculate_parameters(c)
         tokenizer_data, model_options = comfy.text_encoders.long_clipl.model_options_long_clip(c, tokenizer_data, model_options)
 
-    clip = CLIP(clip_target, embedding_directory=embedding_directory, parameters=parameters, tokenizer_data=tokenizer_data, model_options=model_options)
-    for c in clip_data:
-        m, u = clip.load_sd(c)
-        if len(m) > 0:
-            logging.warning("clip missing: {}".format(m))
-
-        if len(u) > 0:
-            logging.debug("clip unexpected: {}".format(u))
+    clip = CLIP(clip_target, embedding_directory=embedding_directory, parameters=parameters, tokenizer_data=tokenizer_data, state_dict=clip_data, model_options=model_options)
     return clip
 
 def load_gligen(ckpt_path):
@@ -1295,6 +1336,10 @@ def load_state_dict_guess_config(sd, output_vae=True, output_clip=True, output_c
     weight_dtype = comfy.utils.weight_dtype(sd, diffusion_model_prefix)
     load_device = model_management.get_torch_device()
 
+    custom_operations = model_options.get("custom_operations", None)
+    if custom_operations is None:
+        sd, metadata = comfy.utils.convert_old_quants(sd, diffusion_model_prefix, metadata=metadata)
+
     model_config = model_detection.model_config_from_unet(sd, diffusion_model_prefix, metadata=metadata)
     if model_config is None:
         logging.warning("Warning, This is not a checkpoint file, trying to load it as a diffusion model only.")
@@ -1303,18 +1348,22 @@ def load_state_dict_guess_config(sd, output_vae=True, output_clip=True, output_c
             return None
         return (diffusion_model, None, VAE(sd={}), None)  # The VAE object is there to throw an exception if it's actually used'
 
-
     unet_weight_dtype = list(model_config.supported_inference_dtypes)
-    if model_config.scaled_fp8 is not None:
+    if model_config.quant_config is not None:
         weight_dtype = None
 
-    model_config.custom_operations = model_options.get("custom_operations", None)
+    if custom_operations is not None:
+        model_config.custom_operations = custom_operations
+
     unet_dtype = model_options.get("dtype", model_options.get("weight_dtype", None))
 
     if unet_dtype is None:
         unet_dtype = model_management.unet_dtype(model_params=parameters, supported_dtypes=unet_weight_dtype, weight_dtype=weight_dtype)
 
-    manual_cast_dtype = model_management.unet_manual_cast(unet_dtype, load_device, model_config.supported_inference_dtypes)
+    if model_config.quant_config is not None:
+        manual_cast_dtype = model_management.unet_manual_cast(None, load_device, model_config.supported_inference_dtypes)
+    else:
+        manual_cast_dtype = model_management.unet_manual_cast(unet_dtype, load_device, model_config.supported_inference_dtypes)
     model_config.set_inference_dtype(unet_dtype, manual_cast_dtype)
 
     if model_config.clip_vision_prefix is not None:
@@ -1332,22 +1381,33 @@ def load_state_dict_guess_config(sd, output_vae=True, output_clip=True, output_c
         vae = VAE(sd=vae_sd, metadata=metadata)
 
     if output_clip:
+        if te_model_options.get("custom_operations", None) is None:
+            scaled_fp8_list = []
+            for k in list(sd.keys()):  # Convert scaled fp8 to mixed ops
+                if k.endswith(".scaled_fp8"):
+                    scaled_fp8_list.append(k[:-len("scaled_fp8")])
+
+            if len(scaled_fp8_list) > 0:
+                out_sd = {}
+                for k in sd:
+                    skip = False
+                    for pref in scaled_fp8_list:
+                        skip = skip or k.startswith(pref)
+                    if not skip:
+                        out_sd[k] = sd[k]
+
+                for pref in scaled_fp8_list:
+                    quant_sd, qmetadata = comfy.utils.convert_old_quants(sd, pref, metadata={})
+                    for k in quant_sd:
+                        out_sd[k] = quant_sd[k]
+                    sd = out_sd
+
         clip_target = model_config.clip_target(state_dict=sd)
         if clip_target is not None:
             clip_sd = model_config.process_clip_state_dict(sd)
             if len(clip_sd) > 0:
                 parameters = comfy.utils.calculate_parameters(clip_sd)
-                clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=parameters, model_options=te_model_options)
-                m, u = clip.load_sd(clip_sd, full_model=True)
-                if len(m) > 0:
-                    m_filter = list(filter(lambda a: ".logit_scale" not in a and ".transformer.text_projection.weight" not in a, m))
-                    if len(m_filter) > 0:
-                        logging.warning("clip missing: {}".format(m))
-                    else:
-                        logging.debug("clip missing: {}".format(m))
-
-                if len(u) > 0:
-                    logging.debug("clip unexpected {}:".format(u))
+                clip = CLIP(clip_target, embedding_directory=embedding_directory, tokenizer_data=clip_sd, parameters=parameters, state_dict=clip_sd, model_options=te_model_options)
             else:
                 logging.warning("no CLIP/text encoder weights in checkpoint, the text encoder model will not be loaded.")
 
@@ -1394,6 +1454,9 @@ def load_diffusion_model_state_dict(sd, model_options={}, metadata=None):
     if len(temp_sd) > 0:
         sd = temp_sd
 
+    custom_operations = model_options.get("custom_operations", None)
+    if custom_operations is None:
+        sd, metadata = comfy.utils.convert_old_quants(sd, "", metadata=metadata)
     parameters = comfy.utils.calculate_parameters(sd)
     weight_dtype = comfy.utils.weight_dtype(sd)
 
@@ -1424,7 +1487,7 @@ def load_diffusion_model_state_dict(sd, model_options={}, metadata=None):
 
     offload_device = model_management.unet_offload_device()
     unet_weight_dtype = list(model_config.supported_inference_dtypes)
-    if model_config.scaled_fp8 is not None:
+    if model_config.quant_config is not None:
         weight_dtype = None
 
     if dtype is None:
@@ -1432,12 +1495,15 @@ def load_diffusion_model_state_dict(sd, model_options={}, metadata=None):
     else:
         unet_dtype = dtype
 
-    if model_config.layer_quant_config is not None:
+    if model_config.quant_config is not None:
         manual_cast_dtype = model_management.unet_manual_cast(None, load_device, model_config.supported_inference_dtypes)
     else:
         manual_cast_dtype = model_management.unet_manual_cast(unet_dtype, load_device, model_config.supported_inference_dtypes)
     model_config.set_inference_dtype(unet_dtype, manual_cast_dtype)
-    model_config.custom_operations = model_options.get("custom_operations", model_config.custom_operations)
+
+    if custom_operations is not None:
+        model_config.custom_operations = custom_operations
+
     if model_options.get("fp8_optimizations", False):
         model_config.optimizations["fp8"] = True
 
@@ -1475,6 +1541,9 @@ def save_checkpoint(output_path, model, clip=None, vae=None, clip_vision=None, m
     vae_sd = None
     if vae is not None:
         vae_sd = vae.get_sd()
+
+    if metadata is None:
+        metadata = {}
 
     model_management.load_models_gpu(load_models, force_patch_weights=True)
     clip_vision_sd = clip_vision.get_sd() if clip_vision is not None else None
