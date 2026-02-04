@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import itertools
-from comfy.ldm.modules.attention import optimized_attention
+from comfy.ldm.modules.attention import attention_pytorch
 import comfy.model_management
 from comfy.ldm.flux.layers import timestep_embedding
 
@@ -183,7 +183,7 @@ class AceStepAttention(nn.Module):
             else:
                 attn_bias = window_bias
 
-        attn_output = optimized_attention(query_states, key_states, value_states, self.num_heads, attn_bias, skip_reshape=True)
+        attn_output = attention_pytorch(query_states, key_states, value_states, self.num_heads, attn_bias, skip_reshape=True)
         attn_output = self.o_proj(attn_output)
 
         return attn_output
