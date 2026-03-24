@@ -534,8 +534,7 @@ class LoadLatent:
 
     @classmethod
     def INPUT_TYPES(s):
-        input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f)) and f.endswith(".latent")]
+        files = []
         return {"required": {"latent": [sorted(files), ]}, }
 
     CATEGORY = "_for_testing"

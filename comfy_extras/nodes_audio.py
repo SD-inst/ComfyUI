@@ -296,8 +296,7 @@ def load(filepath: str) -> tuple[torch.Tensor, int]:
 class LoadAudio(IO.ComfyNode):
     @classmethod
     def define_schema(cls):
-        input_dir = folder_paths.get_input_directory()
-        files = folder_paths.filter_files_content_types(os.listdir(input_dir), ["audio", "video"])
+        files = []
         return IO.Schema(
             node_id="LoadAudio",
             search_aliases=["import audio", "open audio", "audio file"],

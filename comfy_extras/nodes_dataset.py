@@ -69,12 +69,7 @@ class LoadImageDataSetFromFolderNode(io.ComfyNode):
     @classmethod
     def execute(cls, folder):
         sub_input_dir = os.path.join(folder_paths.get_input_directory(), folder)
-        valid_extensions = [".png", ".jpg", ".jpeg", ".webp"]
-        image_files = [
-            f
-            for f in os.listdir(sub_input_dir)
-            if any(f.lower().endswith(ext) for ext in valid_extensions)
-        ]
+        image_files = []
         output_tensor = load_and_process_images(image_files, sub_input_dir)
         return io.NodeOutput(output_tensor)
 
@@ -113,30 +108,10 @@ class LoadImageTextDataSetFromFolderNode(io.ComfyNode):
         logging.info(f"Loading images from folder: {folder}")
 
         sub_input_dir = os.path.join(folder_paths.get_input_directory(), folder)
-        valid_extensions = [".png", ".jpg", ".jpeg", ".webp"]
 
         image_files = []
-        for item in os.listdir(sub_input_dir):
-            path = os.path.join(sub_input_dir, item)
-            if any(item.lower().endswith(ext) for ext in valid_extensions):
-                image_files.append(path)
-            elif os.path.isdir(path):
-                # Support kohya-ss/sd-scripts folder structure
-                repeat = 1
-                if item.split("_")[0].isdigit():
-                    repeat = int(item.split("_")[0])
-                image_files.extend(
-                    [
-                        os.path.join(path, f)
-                        for f in os.listdir(path)
-                        if any(f.lower().endswith(ext) for ext in valid_extensions)
-                    ]
-                    * repeat
-                )
 
-        caption_file_path = [
-            f.replace(os.path.splitext(f)[1], ".txt") for f in image_files
-        ]
+        caption_file_path = []
         captions = []
         for caption_file in caption_file_path:
             caption_path = os.path.join(sub_input_dir, caption_file)
