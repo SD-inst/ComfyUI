@@ -27,3 +27,4 @@ uv.lock
 export
 deps
 *.un~
+.comfy_environment
