@@ -238,6 +238,7 @@ database_default_path = os.path.abspath(
 )
 parser.add_argument("--database-url", type=str, default=f"sqlite:///{database_default_path}", help="Specify the database URL, e.g. for an in-memory database you can use 'sqlite:///:memory:'.")
 parser.add_argument("--enable-assets", action="store_true", help="Enable the assets system (API routes, database synchronization, and background scanning).")
+parser.add_argument("--password-file", type=str, default=None, help="Path to a YAML file with dot-directory passwords. Format: {dirname: password}. Key is directory name without the leading dot. e.g. {\"private\": \"123\"} unlocks .private with password 123.")
 
 if comfy.options.args_parsing:
     args = parser.parse_args()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 import mimetypes
 import logging
@@ -12,6 +13,7 @@ from comfy.cli_args import args
 supported_pt_extensions: set[str] = {'.ckpt', '.pt', '.pt2', '.bin', '.pth', '.safetensors', '.pkl', '.sft'}
 
 folder_names_and_paths: dict[str, tuple[list[str], set[str]]] = {}
+dotdir_passwords: dict[str, str] | None = None
 
 # --base-directory - Resets all default paths configured in folder_paths with a new base path
 if args.base_directory:
@@ -417,7 +419,7 @@ def cached_filename_list_(folder_name: str) -> tuple[list[str], dict[str, float]
 
     return out
 
-def get_filename_list(folder_name: str) -> list[str]:
+def _get_filename_list_impl(folder_name: str) -> list[str]:
     folder_name = map_legacy(folder_name)
     out = cached_filename_list_(folder_name)
     if out is None:
@@ -426,6 +428,10 @@ def get_filename_list(folder_name: str) -> list[str]:
         filename_list_cache[folder_name] = out
     cache_helper.set(folder_name, out)
     return list(out[0])
+
+
+def get_filename_list(folder_name: str) -> list[str]:
+    return sys.modules['folder_paths']._get_filename_list_impl(folder_name)
 
 def get_save_image_path(filename_prefix: str, output_dir: str, image_width=0, image_height=0) -> tuple[str, str, int, str, str]:
     def map_filename(filename: str) -> tuple[int, str]:
@@ -496,3 +502,44 @@ def get_input_subfolders() -> list[str]:
         return sorted(folders)
     except FileNotFoundError:
         return []
+
+
+def filter_hidden_files_by_relpath(file_list: list[str], allowed_hidden_dirs: set[str]) -> list[str]:
+    """Filter files whose relative paths contain hidden (dot-prefixed) directories.
+
+    Args:
+        file_list: List of relative file paths from get_filename_list()
+        allowed_hidden_dirs: Set of hidden dir names (with dots) that should pass through.
+            Empty set means hide all hidden directories (except .git).
+
+    Returns:
+        Filtered list excluding files in hidden directories (except .git and allowed dirs)
+    """
+    result = []
+    for f in file_list:
+        parts = f.replace('\\', '/').split('/')
+        is_hidden = False
+        for part in parts:
+            if part.startswith('.') and part != '.git' and part not in allowed_hidden_dirs:
+                is_hidden = True
+                break
+        if not is_hidden:
+            result.append(f)
+    return result
+
+
+  # Load dot-directory passwords after full module initialization
+# (cli_args.py imports folder_paths during init, before this line is reached)
+if dotdir_passwords is None:
+    pw_path = getattr(args, 'password_file', None)
+    if pw_path:
+        try:
+            import yaml
+            with open(pw_path, 'r', encoding='utf-8') as f:
+                pw_data = yaml.safe_load(f) or {}
+            if isinstance(pw_data, dict):
+                dotdir_passwords = pw_data
+        except Exception:
+            pass
+    if dotdir_passwords is None:
+        dotdir_passwords = {}

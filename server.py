@@ -323,6 +323,8 @@ class PromptServer():
         @routes.get("/embeddings")
         def get_embeddings(request):
             embeddings = folder_paths.get_filename_list("embeddings")
+            allowed = _get_allowed_hidden_dirs(request)
+            embeddings = folder_paths.filter_hidden_files_by_relpath(embeddings, allowed)
             return web.json_response(list(map(lambda a: os.path.splitext(a)[0], embeddings)))
 
         @routes.get("/models")
@@ -337,6 +339,8 @@ class PromptServer():
             if folder not in folder_paths.folder_names_and_paths:
                 return web.Response(status=404)
             files = folder_paths.get_filename_list(folder)
+            allowed = _get_allowed_hidden_dirs(request)
+            files = folder_paths.filter_hidden_files_by_relpath(files, allowed)
             return web.json_response(files)
 
         @routes.get("/extensions")
@@ -740,10 +744,51 @@ class PromptServer():
 
             return info
 
+        def _get_allowed_hidden_dirs(request):
+            dir_name = request.query.get("dir", "").strip()
+            password = request.query.get("password", "").strip()
+            allowed_hidden_dirs: set[str] = set()
+
+            if dir_name and password:
+                dir_key = dir_name.lstrip('.')
+                if dir_key in folder_paths.dotdir_passwords:
+                    if folder_paths.dotdir_passwords[dir_key] == password:
+                        allowed_hidden_dirs = {f".{dir_key}"}
+                    else:
+                        logging.warning(f"Dot-directory unlock failed (wrong password): dir={dir_name}")
+                else:
+                    logging.warning(f"Dot-directory unlock failed (unknown dir): dir={dir_name}")
+
+            return allowed_hidden_dirs
+
+        def _apply_dotdir_filter(allowed_hidden_dirs):
+            _orig_cached = folder_paths.cached_filename_list_
+            _impl_module = sys.modules['folder_paths']
+            _orig_impl = _impl_module._get_filename_list_impl
+
+            def _patched_cached(folder_name, *args, **kwargs):
+                return None
+
+            def _patched_impl(folder_name, *args, **kwargs):
+                result = _orig_impl(folder_name, *args, **kwargs)
+                return folder_paths.filter_hidden_files_by_relpath(result, allowed_hidden_dirs)
+
+            _impl_module._get_filename_list_impl = _patched_impl
+
+            return lambda: (
+                setattr(_impl_module, 'cached_filename_list_', _orig_cached) or
+                setattr(_impl_module, '_get_filename_list_impl', _orig_impl) or
+                None
+            )
+
         @routes.get("/object_info")
         async def get_object_info(request):
+            allowed_hidden_dirs = _get_allowed_hidden_dirs(request)
+
             asset_seeder.start(roots=("models", "input", "output"))
-            with folder_paths.cache_helper:
+
+            restore = _apply_dotdir_filter(allowed_hidden_dirs)
+            try:
                 out = {}
                 for x in nodes.NODE_CLASS_MAPPINGS:
                     try:
@@ -752,14 +797,22 @@ class PromptServer():
                         logging.error(f"[ERROR] An error occurred while retrieving information for the '{x}' node.")
                         logging.error(traceback.format_exc())
                 return web.json_response(out)
+            finally:
+                restore()
 
         @routes.get("/object_info/{node_class}")
         async def get_object_info_node(request):
             node_class = request.match_info.get("node_class", None)
-            out = {}
-            if (node_class is not None) and (node_class in nodes.NODE_CLASS_MAPPINGS):
-                out[node_class] = node_info(node_class)
-            return web.json_response(out)
+            allowed_hidden_dirs = _get_allowed_hidden_dirs(request)
+
+            restore = _apply_dotdir_filter(allowed_hidden_dirs)
+            try:
+                out = {}
+                if (node_class is not None) and (node_class in nodes.NODE_CLASS_MAPPINGS):
+                    out[node_class] = node_info(node_class)
+                return web.json_response(out)
+            finally:
+                restore()
 
         @routes.get("/api/jobs")
         async def get_jobs(request):

@@ -23,3 +23,7 @@ web_custom_versions/
 .DS_Store
 filtered-openapi.yaml
 uv.lock
+.cache
+export
+deps
+*.un~
