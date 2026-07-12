@@ -7,17 +7,17 @@ components:
                     description: Timestamp when the asset was created
                     format: date-time
                     type: string
-                display_name:
-                    description: Display name of the asset. Mirrors name for backwards compatibility.
-                    nullable: true
-                    type: string
-                file_path:
-                    description: Relative path in global-namespace-root form (e.g. "models/checkpoints/flux.safetensors")
-                    nullable: true
-                    type: string
                 hash:
                     description: Blake3 hash of the asset content.
                     pattern: ^blake3:[a-f0-9]{64}$
+                    type: string
+                loader_path:
+                    description: The value a loader consumes to load this asset. Null when no loader can resolve the file.
+                    nullable: true
+                    type: string
+                display_name:
+                    description: Human-facing label for the asset. Not unique.
+                    nullable: true
                     type: string
                 id:
                     description: Unique identifier for the asset
@@ -144,14 +144,6 @@ components:
         AssetUpdated:
             description: Response returned when an existing asset is successfully updated.
             properties:
-                display_name:
-                    description: Display name of the asset. Mirrors name for backwards compatibility.
-                    nullable: true
-                    type: string
-                file_path:
-                    description: Relative path in global-namespace-root form (e.g. "models/checkpoints/flux.safetensors")
-                    nullable: true
-                    type: string
                 hash:
                     description: Blake3 hash of the asset content.
                     pattern: ^blake3:[a-f0-9]{64}$
@@ -783,6 +775,14 @@ components:
         ModelFolder:
             description: Represents a folder containing models
             properties:
+                extensions:
+                    description: The folder's registered file-extension allowlist. An empty array means the folder accepts any extension (match-all).
+                    example:
+                        - .ckpt
+                        - .safetensors
+                    items:
+                        type: string
+                    type: array
                 folders:
                     description: List of paths where models of this type are stored
                     example:
@@ -1644,7 +1644,7 @@ paths:
                                     format: uuid
                                     type: string
                                 tags:
-                                    description: JSON-encoded array of freeform tag strings, e.g. '["models","checkpoint"]'. Common types include "models", "input", "output", and "temp", but any tag can be used in any order.
+                                    description: JSON-encoded array of tag strings. For new byte uploads, include exactly one destination role (`input`, `output`, or `models`); `models` uploads also require exactly one `model_type:<folder_name>` tag. Extra tags are stored as labels and do not create path components.
                                     type: string
                                 user_metadata:
                                     description: Custom JSON metadata as a string
@@ -1692,6 +1692,12 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ErrorResponse'
                     description: Unsupported media type
+                "422":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Validation error (e.g., disallowed model_type tag)
                 "500":
                     content:
                         application/json:
@@ -1823,7 +1829,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/AssetUpdated'
+                                $ref: '#/components/schemas/Asset'
                     description: Asset updated successfully
                 "400":
                     content:
@@ -2137,6 +2143,12 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/ErrorResponse'
                     description: Source asset with given hash not found
+                "422":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Validation error (e.g., disallowed model_type tag)
                 "500":
                     content:
                         application/json:
@@ -2457,6 +2469,9 @@ paths:
                                         type: integer
                                     supports_preview_metadata:
                                         description: Whether the server supports preview metadata
+                                        type: boolean
+                                    supports_model_type_tags:
+                                        description: Whether the server supports namespaced model type asset tags
                                         type: boolean
                                 type: object
                     description: Success
@@ -2992,7 +3007,7 @@ paths:
                     format: uuid
                     type: string
                 - description: |
-                    When present, each output item in the response receives a `short_url` field containing an owner-gated durable link for that asset. Omit this parameter (the default) to receive a response identical to the no-param baseline. The value selects the link's lifetime: use `ephemeral_tool_chain` for short-lived machine-to-machine handoffs (~15 minutes); use `default` for durable human-revisitable links (30 days). Links are minted only for the authenticated request owner and are not resolvable by other users.
+                    When present, each output item in the response receives a `short_url` field containing a short link for that asset. Omit this parameter (the default) to receive a response identical to the no-param baseline. The value selects the link's lifetime and auth model: use `ephemeral_tool_chain` for short-lived (≤5 minute) machine-to-machine handoffs — these are public bearer links where the link ID itself is the credential, so anyone holding the link can resolve it (intended for pasting into an agent/MCP tool chain); use `default` for durable (30 day) human-revisitable links, which are owner-gated and resolvable only by the authenticated owner. Links are always minted under the authenticated request owner's identity; the auth model is selected by the server and is never settable by the caller.
                   in: query
                   name: short_link
                   schema:
