@@ -285,7 +285,7 @@ class LoadVideoDataSetFromFolderNode(io.ComfyNode):
 
     @classmethod
     def execute(cls, folder):
-        sub_input_dir = os.path.join(folder_paths.get_input_directory(), folder)
+        sub_input_dir = secure_subfolder_path(folder_paths.get_input_directory(), folder)
         video_files = sorted([
             f for f in os.listdir(sub_input_dir)
             if any(f.lower().endswith(ext) for ext in VALID_VIDEO_EXTENSIONS)
@@ -332,7 +332,7 @@ class LoadVideoTextDataSetFromFolderNode(io.ComfyNode):
 
     @classmethod
     def execute(cls, folder):
-        sub_input_dir = os.path.join(folder_paths.get_input_directory(), folder)
+        sub_input_dir = secure_subfolder_path(folder_paths.get_input_directory(), folder)
 
         video_files = []
         for item in sorted(os.listdir(sub_input_dir)):
