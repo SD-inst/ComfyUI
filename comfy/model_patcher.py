@@ -1835,9 +1835,15 @@ class ModelPatcherDynamic(ModelPatcher):
         restored = self.model.model_loaded_weight_memory
         for key in list(self.backup.keys()):
             bk = self.backup.pop(key)
-            comfy.utils.set_attr_param(self.model, key, bk.weight)
+            try:
+                comfy.utils.set_attr_param(self.model, key, bk.weight)
+            except AttributeError:
+                pass
         for key in list(self.backup_buffers.keys()):
-            comfy.utils.set_attr_buffer(self.model, key, self.backup_buffers.pop(key))
+            try:
+                comfy.utils.set_attr_buffer(self.model, key, self.backup_buffers.pop(key))
+            except AttributeError:
+                pass
         self.model.model_loaded_weight_memory = 0
         return restored
 
