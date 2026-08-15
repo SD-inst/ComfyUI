@@ -359,7 +359,10 @@ def prompt_worker(q, server_instance):
 
         queue_item = q.get(timeout=timeout)
         if queue_item is not None:
-            requests.post("http://authproxy:7860/cui/join", timeout=600)
+            try:
+                requests.post("http://authproxy:7860/cui/join", timeout=600)
+            except Exception:
+                logging.warning("authproxy join failed", exc_info=True)
             item, item_id = queue_item
             execution_start_time = time.perf_counter()
             prompt_id = item[1]
@@ -388,7 +391,10 @@ def prompt_worker(q, server_instance):
             current_time = time.perf_counter()
             execution_time = current_time - execution_start_time
             logging.info("Prompt executed in {:.2f} seconds".format(execution_time))
-            requests.post('http://authproxy:7860/cui/leave', timeout=5)
+            try:
+                requests.post('http://authproxy:7860/cui/leave', timeout=5)
+            except Exception:
+                logging.warning("authproxy leave failed", exc_info=True)
 
             # Log Time in a more readable way after 10 minutes
             if execution_time > 600:
@@ -419,7 +425,10 @@ def prompt_worker(q, server_instance):
             last_gc_collect = 0
 
         if free_memory or unload_models:
-            requests.post("http://authproxy:7860/internal/free_complete", timeout=10)
+            try:
+                requests.post("http://authproxy:7860/internal/free_complete", timeout=10)
+            except Exception:
+                logging.warning("authproxy free_complete failed", exc_info=True)
 
         if need_gc:
             current_time = time.perf_counter()
@@ -461,7 +470,10 @@ def hijack_progress(server_instance):
 
         server_instance.send_sync("progress", progress, server_instance.client_id)
         progress["queue"] = server_instance.prompt_queue.get_tasks_remaining()
-        requests.post("http://authproxy:7860/cui/progress", json=progress, timeout=2)
+        try:
+            requests.post("http://authproxy:7860/cui/progress", json=progress, timeout=2)
+        except Exception:
+            logging.warning("authproxy progress failed", exc_info=True)
         if preview_image is not None:
             # Only send old method if client doesn't support preview metadata
             if not feature_flags.supports_feature(
