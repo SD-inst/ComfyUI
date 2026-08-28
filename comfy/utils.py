@@ -1310,6 +1310,15 @@ class ProgressBar:
         self.node_id = node_id
         self._last_update_time = 0.0
         self._last_sent_value = -1
+        # Send a zero-progress on creation so the node's timer starts at the
+        # node's start (not at the first real step, which arrives later as
+        # value=1). Without this the first progress POST lags the node start
+        # by a full step, skewing ETA/TaskDuration. Keep _last_sent_value at
+        # -1 so the first real update() is still treated as "first" and sent
+        # without throttling.
+        if self.hook is not None:
+            self.hook(0, self.total, None, node_id=self.node_id)
+            self._last_update_time = time.perf_counter()
 
     def update_absolute(self, value, total=None, preview=None):
         if total is not None:
