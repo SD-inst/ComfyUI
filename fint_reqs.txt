@@ -1,8 +1,0 @@
-numpy
-einops
-opencv-contrib-python
-kornia
-scipy
-Pillow
-tqdm
-cupy-wheel
