@@ -1096,6 +1096,11 @@ class PromptServer():
                     usage_source = request.headers.get("Comfy-Usage-Source")
                     if usage_source:
                         extra_data["comfy_usage_source"] = usage_source
+                # Per-user task limit: attribute the prompt to the authenticated
+                # user (authproxy stamps X-Authproxy-User on the proxied request).
+                authproxy_user = request.headers.get("X-Authproxy-User")
+                if authproxy_user:
+                    extra_data["authproxy_user"] = authproxy_user
                 if valid[0]:
                     outputs_to_execute = valid[2]
                     sensitive = {}
