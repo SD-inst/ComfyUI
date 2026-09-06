@@ -386,10 +386,26 @@ def prompt_worker(q, server_instance):
             except Exception:
                 logging.warning("authproxy join failed", exc_info=True)
             item, item_id = queue_item
-            execution_start_time = time.perf_counter()
             prompt_id = item[1]
             server_instance.last_prompt_id = prompt_id
 
+            # A cancel that lands while the worker is blocked on the service
+            # mutex (join) sets the global interrupt flag, but e.execute()
+            # resets it at the start of execute_async, so the cancel would be
+            # lost and the task would run to completion once the mutex is
+            # released. Detect it here and abort before executing.
+            if comfy.model_management.processing_interrupted():
+                comfy.model_management.interrupt_current_processing(False)
+                q.task_done(item_id, None, status=None)
+                if server_instance.client_id is not None:
+                    server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
+                try:
+                    requests.post('http://authproxy:7860/cui/leave', timeout=5)
+                except Exception:
+                    logging.warning("authproxy leave failed", exc_info=True)
+                continue
+
+            execution_start_time = time.perf_counter()
             sensitive = item[5]
             extra_data = item[3].copy()
             for k in sensitive:
@@ -397,16 +413,16 @@ def prompt_worker(q, server_instance):
 
             # Per-user task limit: start the authproxy timer (owner from the
             # prompt's extra_data, stamped from X-Authproxy-User by authproxy).
-            # No owner (unauthenticated) -> no limit, so the timer is not started.
-            owner = extra_data.get("authproxy_user")
-            if owner:
-                try:
-                    requests.post("http://authproxy:7860/internal/job_start",
-                                   json={"service": "comfyui", "task_id": prompt_id,
-                                         "owner": owner},
-                                   timeout=5)
-                except Exception:
-                    logging.warning("authproxy job_start failed", exc_info=True)
+            # Unauthenticated prompts are tracked under the "default" label, so
+            # the authproxy applies task_timeout_default to them.
+            owner = extra_data.get("authproxy_user") or "default"
+            try:
+                requests.post("http://authproxy:7860/internal/job_start",
+                               json={"service": "comfyui", "task_id": prompt_id,
+                                     "owner": owner},
+                               timeout=5)
+            except Exception:
+                logging.warning("authproxy job_start failed", exc_info=True)
 
             asset_seeder.pause()
             e.execute(item[2], prompt_id, extra_data, item[4])
