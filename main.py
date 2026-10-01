@@ -341,129 +341,137 @@ def prompt_worker(q, server_instance, asset_manager):
     last_gc_collect = 0
     need_gc = False
     gc_collect_interval = 10.0
+    background_scan_paused = False
 
     while True:
-        timeout = 1000.0
-        if need_gc:
-            timeout = max(gc_collect_interval - (current_time - last_gc_collect), 0.0)
+        try:
+            timeout = 1000.0
+            if need_gc:
+                timeout = max(gc_collect_interval - (current_time - last_gc_collect), 0.0)
 
-        queue_item = q.get(timeout=timeout)
-        if queue_item is not None:
-            try:
-                requests.post("http://authproxy:7860/cui/join", timeout=600)
-            except Exception:
-                logging.warning("authproxy join failed", exc_info=True)
-            item, item_id = queue_item
-            prompt_id = item[1]
-            server_instance.last_prompt_id = prompt_id
+            queue_item = q.get(timeout=timeout)
+            if queue_item is not None:
+                try:
+                    requests.post("http://authproxy:7860/cui/join", timeout=600)
+                except Exception:
+                    logging.warning("authproxy join failed", exc_info=True)
+                item, item_id = queue_item
+                prompt_id = item[1]
+                server_instance.last_prompt_id = prompt_id
 
-            # A cancel that lands while the worker is blocked on the service
-            # mutex (join) sets the global interrupt flag, but e.execute()
-            # resets it at the start of execute_async, so the cancel would be
-            # lost and the task would run to completion once the mutex is
-            # released. Detect it here and abort before executing.
-            if comfy.model_management.processing_interrupted():
-                comfy.model_management.interrupt_current_processing(False)
-                q.task_done(item_id, None, status=None)
+                # A cancel that lands while the worker is blocked on the service
+                # mutex (join) sets the global interrupt flag, but e.execute()
+                # resets it at the start of execute_async, so the cancel would be
+                # lost and the task would run to completion once the mutex is
+                # released. Detect it here and abort before executing.
+                if comfy.model_management.processing_interrupted():
+                    comfy.model_management.interrupt_current_processing(False)
+                    q.task_done(item_id, None, status=None)
+                    if server_instance.client_id is not None:
+                        server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
+                    try:
+                        requests.post('http://authproxy:7860/cui/leave', timeout=5)
+                    except Exception:
+                        logging.warning("authproxy leave failed", exc_info=True)
+                    continue
+
+                execution_start_time = time.perf_counter()
+                sensitive = item[5]
+                extra_data = item[3].copy()
+                for k in sensitive:
+                    extra_data[k] = sensitive[k]
+
+                # Per-user task limit: start the authproxy timer (owner from the
+                # prompt's extra_data, stamped from X-Authproxy-User by authproxy).
+                # Unauthenticated prompts are tracked under the "default" label, so
+                # the authproxy applies task_timeout_default to them.
+                owner = extra_data.get("authproxy_user") or "default"
+                try:
+                    requests.post("http://authproxy:7860/internal/job_start",
+                                   json={"service": "comfyui", "task_id": prompt_id,
+                                         "owner": owner},
+                                   timeout=5)
+                except Exception:
+                    logging.warning("authproxy job_start failed", exc_info=True)
+
+                asset_manager.pause_background_scan()
+                background_scan_paused = True
+                e.execute(item[2], prompt_id, extra_data, item[4])
+
+                need_gc = True
+
+                remove_sensitive = lambda prompt: prompt[:5] + prompt[6:]
+                q.task_done(item_id,
+                            e.history_result,
+                            status=execution.PromptQueue.ExecutionStatus(
+                                status_str='success' if e.success else 'error',
+                                completed=e.success,
+                                messages=e.status_messages), process_item=remove_sensitive)
                 if server_instance.client_id is not None:
                     server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
+
+                current_time = time.perf_counter()
+                execution_time = current_time - execution_start_time
+
                 try:
                     requests.post('http://authproxy:7860/cui/leave', timeout=5)
                 except Exception:
                     logging.warning("authproxy leave failed", exc_info=True)
-                continue
+                # Per-user task limit: stop the authproxy timer for this job.
+                try:
+                    requests.post("http://authproxy:7860/internal/job_end",
+                                   json={"service": "comfyui", "task_id": prompt_id},
+                                   timeout=5)
+                except Exception:
+                    logging.warning("authproxy job_end failed", exc_info=True)
 
-            execution_start_time = time.perf_counter()
-            sensitive = item[5]
-            extra_data = item[3].copy()
-            for k in sensitive:
-                extra_data[k] = sensitive[k]
+                # Log Time in a more readable way after 10 minutes
+                if execution_time > 600:
+                    execution_time = time.strftime("%H:%M:%S", time.gmtime(execution_time))
+                    logging.info(f"Prompt executed in {execution_time}", extra={'color': 'green'})
+                else:
+                    logging.info("Prompt executed in {:.2f} seconds".format(execution_time), extra={'color': 'green'})
 
-            # Per-user task limit: start the authproxy timer (owner from the
-            # prompt's extra_data, stamped from X-Authproxy-User by authproxy).
-            # Unauthenticated prompts are tracked under the "default" label, so
-            # the authproxy applies task_timeout_default to them.
-            owner = extra_data.get("authproxy_user") or "default"
-            try:
-                requests.post("http://authproxy:7860/internal/job_start",
-                               json={"service": "comfyui", "task_id": prompt_id,
-                                     "owner": owner},
-                               timeout=5)
-            except Exception:
-                logging.warning("authproxy job_start failed", exc_info=True)
+            flags = q.get_flags()
+            free_memory = flags.get("free_memory", False)
 
-            asset_manager.pause_background_scan()
-            e.execute(item[2], prompt_id, extra_data, item[4])
+            if flags.get("unload_models", free_memory):
+                comfy.model_management.unload_all_models()
+                need_gc = True
+                last_gc_collect = 0
 
-            need_gc = True
+            if free_memory:
+                e.reset()
+                need_gc = True
+                last_gc_collect = 0
 
-            remove_sensitive = lambda prompt: prompt[:5] + prompt[6:]
-            q.task_done(item_id,
-                        e.history_result,
-                        status=execution.PromptQueue.ExecutionStatus(
-                            status_str='success' if e.success else 'error',
-                            completed=e.success,
-                            messages=e.status_messages), process_item=remove_sensitive)
-            if server_instance.client_id is not None:
-                server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
+            if flags.get("unload_models", free_memory):
+                try:
+                    requests.post("http://authproxy:7860/internal/free_complete", timeout=10)
+                except Exception:
+                    logging.warning("authproxy free_complete failed", exc_info=True)
 
-            current_time = time.perf_counter()
-            execution_time = current_time - execution_start_time
-            logging.info("Prompt executed in {:.2f} seconds".format(execution_time))
-            try:
-                requests.post('http://authproxy:7860/cui/leave', timeout=5)
-            except Exception:
-                logging.warning("authproxy leave failed", exc_info=True)
-            # Per-user task limit: stop the authproxy timer for this job.
-            try:
-                requests.post("http://authproxy:7860/internal/job_end",
-                               json={"service": "comfyui", "task_id": prompt_id},
-                               timeout=5)
-            except Exception:
-                logging.warning("authproxy job_end failed", exc_info=True)
+            if need_gc:
+                current_time = time.perf_counter()
+                if (current_time - last_gc_collect) > gc_collect_interval:
+                    gc.collect()
+                    comfy.model_management.soft_empty_cache()
+                    last_gc_collect = current_time
+                    need_gc = False
+                    hook_breaker_ac10a0.restore_functions()
 
-            # Log Time in a more readable way after 10 minutes
-            if execution_time > 600:
-                execution_time = time.strftime("%H:%M:%S", time.gmtime(execution_time))
-                logging.info(f"Prompt executed in {execution_time}", extra={'color': 'green'})
-            else:
-                logging.info("Prompt executed in {:.2f} seconds".format(execution_time), extra={'color': 'green'})
-
-        flags = q.get_flags()
-        free_memory = flags.get("free_memory", False)
-        unload_models = flags.get("unload_models", free_memory)
-
-        if unload_models:
-            logging.info("Processing unload_models")
-            comfy.model_management.unload_all_models()
-            need_gc = True
-            last_gc_collect = 0
-            logging.info("unload_models complete")
-
-        if free_memory:
-            logging.info("Processing free_memory")
-            e.reset()
-            need_gc = True
-            last_gc_collect = 0
-
-        if free_memory or unload_models:
-            try:
-                requests.post("http://authproxy:7860/internal/free_complete", timeout=10)
-            except Exception:
-                logging.warning("authproxy free_complete failed", exc_info=True)
-
-        if need_gc:
-            current_time = time.perf_counter()
-            if (current_time - last_gc_collect) > gc_collect_interval:
-                gc.collect()
-                comfy.model_management.soft_empty_cache()
-                last_gc_collect = current_time
-                need_gc = False
-                hook_breaker_ac10a0.restore_functions()
-
-                asset_manager.queue_output_scan()
-                asset_manager.resume_background_scan()
-                logging.info("free_memory complete")
+                    asset_manager.queue_output_scan()
+                    asset_manager.resume_background_scan()
+                    background_scan_paused = False
+        # BaseException is deliberate. This runs on the worker thread, so Ctrl-C lands in
+        # the main thread instead, and resume only flips the seeder's pause state.
+        except BaseException:
+            if background_scan_paused:
+                try:
+                    asset_manager.resume_background_scan()
+                except Exception:
+                    logging.exception("Failed to resume background asset scanning after prompt worker failure")
+            raise
 
 
 async def run(server_instance, address='', port=8188, verbose=True, call_on_start=None):
@@ -559,6 +567,7 @@ def start_comfyui(asyncio_loop=None):
         folder_paths.set_temp_directory(temp_dir)
 
     asset_manager: AssetManager = default_asset_manager()
+    feature_flags.SERVER_FEATURE_FLAGS["assets"] = asset_manager.enabled
     if not asset_manager.enabled:
         cleanup_temp_filesystem()
 
