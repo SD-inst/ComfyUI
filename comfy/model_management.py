@@ -751,6 +751,12 @@ def ensure_pin_budget(size, evict_active=False, loaded=False):
     if shortfall <= 0:
         return True
 
+    #The node output cache is the cheapest RAM to get back, and the only source when pinning is
+    #disabled: free_pins() below has nothing to evict then, so the cache never shrinks by itself.
+    shortfall -= comfy.memory_management.extra_ram_release(comfy.memory_management.RAM_CACHE_HEADROOM)
+    if shortfall <= 0:
+        return True
+
     to_free = shortfall + PIN_PRESSURE_HYSTERESIS
     return free_pins(to_free, evict_active=evict_active, loaded=loaded) >= shortfall
 
@@ -2220,6 +2226,18 @@ def soft_empty_cache(force=False):
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
+
+def empty_host_cache():
+    #Freed pinned tensors land in PyTorch's host caching allocator, which keeps them mapped and
+    #page-locked for reuse. soft_empty_cache() only trims the device pools, so without this the
+    #RAM an unloaded model held stays out of the system forever.
+    if not torch.cuda.is_available():
+        return
+    reserved = torch.cuda.host_memory_stats().get("reserved_bytes.current", 0)
+    torch._C._host_emptyCache()
+    freed = reserved - torch.cuda.host_memory_stats().get("reserved_bytes.current", 0)
+    if freed > 0:
+        logging.info("Released {} MiB of pinned host memory.".format(freed // (1024 * 1024)))
 
 def unload_all_models():
     for device in get_all_torch_devices():

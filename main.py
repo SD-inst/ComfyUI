@@ -461,8 +461,9 @@ def prompt_worker(q, server_instance, asset_manager):
 
             flags = q.get_flags()
             free_memory = flags.get("free_memory", False)
+            unload_models = flags.get("unload_models", free_memory)
 
-            if flags.get("unload_models", free_memory):
+            if unload_models:
                 comfy.model_management.unload_all_models()
                 need_gc = True
                 last_gc_collect = 0
@@ -472,17 +473,15 @@ def prompt_worker(q, server_instance, asset_manager):
                 need_gc = True
                 last_gc_collect = 0
 
-            if flags.get("unload_models", free_memory):
-                try:
-                    requests.post("http://authproxy:7860/internal/free_complete", timeout=10)
-                except Exception:
-                    logging.warning("authproxy free_complete failed", exc_info=True)
-
             if need_gc:
                 current_time = time.perf_counter()
                 if (current_time - last_gc_collect) > gc_collect_interval:
                     gc.collect()
                     comfy.model_management.soft_empty_cache()
+                    if unload_models:
+                        #The unloaded models leave their page-locked host RAM in PyTorch's
+                        #pinned pool; hand it back before anyone is told the memory is free.
+                        comfy.model_management.empty_host_cache()
                     last_gc_collect = current_time
                     need_gc = False
                     hook_breaker_ac10a0.restore_functions()
@@ -490,6 +489,12 @@ def prompt_worker(q, server_instance, asset_manager):
                     asset_manager.queue_output_scan()
                     asset_manager.resume_background_scan()
                     background_scan_paused = False
+
+            if unload_models:
+                try:
+                    requests.post("http://authproxy:7860/internal/free_complete", timeout=10)
+                except Exception:
+                    logging.warning("authproxy free_complete failed", exc_info=True)
         # BaseException is deliberate. This runs on the worker thread, so Ctrl-C lands in
         # the main thread instead, and resume only flips the seeder's pause state.
         except BaseException:
