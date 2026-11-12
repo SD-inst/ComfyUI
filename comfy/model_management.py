@@ -2280,11 +2280,21 @@ class InterruptProcessingException(BaseException):
 interrupt_processing_mutex = threading.RLock()
 
 interrupt_processing = False
-def interrupt_current_processing(value=True):
+# The prompt the pending interrupt was raised for, or None when it was raised
+# without naming one. The interrupt is a single process-wide flag, so it can
+# outlive the job it was aimed at: a cancel dispatched moments before a job
+# finishes on its own is never consumed by that job and is still set when the
+# worker picks up the next item. The owner is what lets the worker tell its own
+# cancel from that leftover flag. Guarded by interrupt_processing_mutex.
+interrupt_prompt_id = None
+
+def interrupt_current_processing(value=True, prompt_id=None):
     global interrupt_processing
     global interrupt_processing_mutex
+    global interrupt_prompt_id
     with interrupt_processing_mutex:
         interrupt_processing = value
+        interrupt_prompt_id = prompt_id if value else None
 
 def processing_interrupted():
     global interrupt_processing
@@ -2292,10 +2302,18 @@ def processing_interrupted():
     with interrupt_processing_mutex:
         return interrupt_processing
 
+def processing_interrupt_owner():
+    global interrupt_prompt_id
+    global interrupt_processing_mutex
+    with interrupt_processing_mutex:
+        return interrupt_prompt_id
+
 def throw_exception_if_processing_interrupted():
     global interrupt_processing
     global interrupt_processing_mutex
+    global interrupt_prompt_id
     with interrupt_processing_mutex:
         if interrupt_processing:
             interrupt_processing = False
+            interrupt_prompt_id = None
             raise InterruptProcessingException()

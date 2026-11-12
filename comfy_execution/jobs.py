@@ -20,6 +20,22 @@ CANCEL_TERMINAL = 'terminal'
 CANCEL_UNKNOWN = 'unknown'
 
 
+def interrupt_applies_to(prompt_id: str, owner: Optional[str]) -> bool:
+    """Whether a pending interrupt owned by ``owner`` cancels ``prompt_id``.
+
+    The interrupt flag is process-wide, so the prompt worker cannot tell from
+    the flag alone whether it was raised for the job it has just picked up. A
+    cancel aimed at the job before this one reads the same way: that job can
+    finish on its own — or sit parked waiting for the authproxy service slot
+    and never reach a check — leaving the flag set for its successor.
+
+    An interrupt raised without an owner (the plain /interrupt endpoint, or any
+    path that does not go through the per-job cancel) asks to stop whatever is
+    running, so it applies to this prompt.
+    """
+    return owner is None or owner == prompt_id
+
+
 class JobStatus:
     """Job status constants."""
     PENDING = 'pending'

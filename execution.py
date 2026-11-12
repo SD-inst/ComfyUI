@@ -1375,14 +1375,20 @@ class PromptQueue:
         prompt) in between. Returns True if a matching job was running and an
         interrupt was signalled, False otherwise. The atomicity is what keeps a
         cancel from landing on an unrelated prompt that started after a separate
-        is-running check: the global interrupt flag is reset at the start of
-        every prompt (execute_async), so a job that finishes before consuming
-        the flag cannot leak the interrupt onto its successor.
+        is-running check.
+
+        The flag itself is process-wide and the running job may be parked on the
+        authproxy service slot rather than executing, so the flag can outlive the
+        prompt it was raised for: that prompt can finish on its own before any
+        interrupt check runs. The id is therefore recorded with the flag
+        (comfy.model_management.interrupt_current_processing), which is what
+        lets the prompt worker tell its own cancel from a leftover one — see
+        comfy_execution.jobs.interrupt_applies_to.
         """
         with self.mutex:
             for item in self.currently_running.values():
                 if item[1] == prompt_id:
-                    nodes.interrupt_processing()
+                    comfy.model_management.interrupt_current_processing(True, prompt_id=prompt_id)
                     return True
         return False
 

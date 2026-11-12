@@ -35,6 +35,7 @@ import faulthandler
 import logging
 import signal
 import sys
+from comfy_execution.jobs import interrupt_applies_to
 from comfy_execution.progress import get_progress_state
 from comfy_execution.utils import get_executing_context
 from comfy_api import feature_flags
@@ -382,17 +383,24 @@ def prompt_worker(q, server_instance, asset_manager):
                 # mutex (join) sets the global interrupt flag, but e.execute()
                 # resets it at the start of execute_async, so the cancel would be
                 # lost and the task would run to completion once the mutex is
-                # released. Detect it here and abort before executing.
+                # released. Detect it here and abort before executing — but only
+                # when the interrupt names this prompt, or names nothing at all.
+                # The flag is process-wide and outlives the job it was raised
+                # for whenever that job finishes on its own, so acting on that
+                # leftover flag would drop a prompt nobody asked to cancel.
                 if comfy.model_management.processing_interrupted():
+                    owner = comfy.model_management.processing_interrupt_owner()
                     comfy.model_management.interrupt_current_processing(False)
-                    q.task_done(item_id, None, status=None)
-                    if server_instance.client_id is not None:
-                        server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
-                    try:
-                        requests.post('http://authproxy:7860/cui/leave', timeout=5)
-                    except Exception:
-                        logging.warning("authproxy leave failed", exc_info=True)
-                    continue
+                    if interrupt_applies_to(prompt_id, owner):
+                        q.task_done(item_id, None, status=None)
+                        if server_instance.client_id is not None:
+                            server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
+                        try:
+                            requests.post('http://authproxy:7860/cui/leave', timeout=5)
+                        except Exception:
+                            logging.warning("authproxy leave failed", exc_info=True)
+                        continue
+                    logging.info("Ignoring an interrupt raised for another prompt (%s), running prompt %s", owner, prompt_id)
 
                 execution_start_time = time.perf_counter()
                 sensitive = item[5]
